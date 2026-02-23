@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid, List as ListIcon } from 'lucide-react';
+import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid, List as ListIcon, Filter, ArrowDownWideNarrow } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
 const TMDB_API_KEY = "342815a2b6a677bbc29fd13a6e3c1c3a"; 
@@ -58,12 +58,11 @@ const shuffleArray = (array) => {
 
 // --- COMPONENTE IMAGEN LAZY ---
 const LazyImage = ({ src, alt, className, eager = false }) => {
-  // Si eager es true, la imagen es visible desde el minuto 0 (sin esperas)
   const [isVisible, setIsVisible] = useState(eager);
   const imgRef = useRef(null);
 
   useEffect(() => {
-    if (eager) return; // Si es carga rápida, ignoramos el observer
+    if (eager) return; 
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -72,7 +71,6 @@ const LazyImage = ({ src, alt, className, eager = false }) => {
           observer.disconnect();
         }
       },
-      // Margen ampliado a 300px para que cargue justo antes de que lo veas
       { rootMargin: "300px" } 
     );
     if (imgRef.current) observer.observe(imgRef.current);
@@ -94,11 +92,11 @@ const LazyImage = ({ src, alt, className, eager = false }) => {
   );
 };
 
-// --- COMPONENTE FILA DE PLEX ---
+// --- COMPONENTE FILA DE PLEX INTELIGENTE ---
 const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon, isModal = false, eager = false }) => {
   const rowRef = useRef(null);
   const containerRef = useRef(null);
-  const [isVisible, setIsVisible] = useState(eager); // Si es main page, lo cargamos del tirón
+  const [isVisible, setIsVisible] = useState(eager); 
   const [showArrows, setShowArrows] = useState(false);
   
   useEffect(() => {
@@ -144,10 +142,24 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
 
   if (!items || items.length === 0) return null;
 
-  // Límite ampliado a 20 películas por fila
-  const limit = isModal ? 15 : 20;
-  const displayItems = items.slice(0, limit);
-  const hasMore = items.length > limit && !isModal;
+  // LÓGICA INTELIGENTE "VER MÁS"
+  const MAX_NORMAL = 11;
+  const SMART_LIMIT = 15; // Si hay 15 o menos, muéstralas todas para no generar botón redundante.
+  
+  let displayItems, hasMore;
+
+  if (isModal) {
+    displayItems = items.slice(0, 15);
+    hasMore = false;
+  } else {
+    if (items.length <= SMART_LIMIT) {
+       displayItems = items;
+       hasMore = false;
+    } else {
+       displayItems = items.slice(0, MAX_NORMAL);
+       hasMore = true;
+    }
+  }
 
   const cardWidthClasses = isModal 
     ? "w-24 sm:w-28 md:w-32 lg:w-36 xl:w-40" 
@@ -249,6 +261,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isScrolled, setIsScrolled] = useState(false);
   const [viewMode, setViewMode] = useState('grid'); 
+
+  // Estados de paginación y filtros
+  const [visibleCount, setVisibleCount] = useState(100);
+  const [sortBy, setSortBy] = useState('default');
+  const [activeGenreFilter, setActiveGenreFilter] = useState('All');
 
   useEffect(() => {
     document.title = "ElPepeStreams";
@@ -436,7 +453,11 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Reseteo de paginación y filtros al cambiar de sección
   useEffect(() => {
+     setVisibleCount(100);
+     setSortBy('default');
+     setActiveGenreFilter('All');
      if (searchQuery) {
          setSelectedCategory(null);
          window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -444,6 +465,9 @@ export default function App() {
   }, [searchQuery]);
 
   useEffect(() => {
+     setVisibleCount(100);
+     setSortBy('default');
+     setActiveGenreFilter('All');
      if (selectedCategory) {
          window.scrollTo({ top: 0, behavior: 'smooth' });
      }
@@ -454,10 +478,11 @@ export default function App() {
     
     let cats = [];
 
-    // Recomendados y Mejor Valoradas limitados a 20 para evitar el botón "Ver más"
-    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 20), icon: <Star size={22}/> });
+    // Recomendados ahora carga 30 (activando el Ver más)
+    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 30), icon: <Star size={22}/> });
 
-    const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 20);
+    // Mejor valoradas ahora carga el Top 100 (activando el Ver más)
+    const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 100);
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
 
     if (sagas.length > 0) {
@@ -476,10 +501,37 @@ export default function App() {
     return [...cats, ...genreCats];
   }, [items, sagas, searchQuery]);
 
-  const filteredItems = items.filter(i => 
-    i.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    i.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const rawDisplayItems = searchQuery 
+    ? items.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || i.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    : (selectedCategory ? selectedCategory.items : []);
+
+  // Lista dinámica de géneros para el filtro desplegable
+  const availableGenres = useMemo(() => {
+    const genres = new Set();
+    rawDisplayItems.forEach(i => {
+      if(i.genres) i.genres.forEach(g => genres.add(g));
+    });
+    return Array.from(genres).sort();
+  }, [rawDisplayItems]);
+
+  // Aplicación de Filtros y Ordenación
+  const processedDisplayItems = useMemo(() => {
+    let result = [...rawDisplayItems];
+    
+    if (activeGenreFilter !== 'All') {
+      result = result.filter(i => i.genres?.includes(activeGenreFilter));
+    }
+
+    if (sortBy === 'az') result.sort((a, b) => (a.displayTitle || a.title).localeCompare(b.displayTitle || b.title));
+    else if (sortBy === 'za') result.sort((a, b) => (b.displayTitle || b.title).localeCompare(a.displayTitle || a.title));
+    else if (sortBy === 'rating') result.sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0));
+    else if (sortBy === 'year') result.sort((a, b) => parseInt(b.year || 0) - parseInt(a.year || 0));
+
+    return result;
+  }, [rawDisplayItems, activeGenreFilter, sortBy]);
+
+  // Paginación de Resultados
+  const paginatedItems = processedDisplayItems.slice(0, visibleCount);
 
   const sagaItems = useMemo(() => {
      if (!selectedItem || selectedItem.isSaga || !selectedItem.collection) return [];
@@ -487,9 +539,10 @@ export default function App() {
   }, [selectedItem, items]);
 
   const renderGridOrList = (arrayToRender) => {
+    if (arrayToRender.length === 0) return <div className="text-gray-500 font-medium py-10 text-center w-full">No se encontraron resultados para estos filtros.</div>;
+
     if (viewMode === 'list') {
       return (
-        // Max-w-5xl eliminado. Ahora fluye al 100% como la cuadrícula.
         <div className="flex flex-col gap-3 md:gap-4 w-full">
           {arrayToRender.map(item => (
             <div key={item.id} className="group cursor-pointer flex gap-4 md:gap-6 bg-neutral-900/30 hover:bg-neutral-800/60 border border-white/5 rounded-xl p-3 md:p-4 transition-all" onClick={() => setSelectedItem(item)}>
@@ -529,6 +582,36 @@ export default function App() {
       </div>
     );
   };
+
+  const renderFiltersAndSorting = () => (
+    <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full md:w-auto mt-4 md:mt-0">
+      <div className="relative flex-1 md:flex-none">
+        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+        <select 
+          value={activeGenreFilter} 
+          onChange={e => setActiveGenreFilter(e.target.value)} 
+          className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-9 pr-8 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full md:w-44 cursor-pointer"
+        >
+          <option value="All">Todos los géneros</option>
+          {availableGenres.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+      </div>
+      <div className="relative flex-1 md:flex-none">
+        <ArrowDownWideNarrow className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+        <select 
+          value={sortBy} 
+          onChange={e => setSortBy(e.target.value)} 
+          className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-9 pr-8 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full md:w-48 cursor-pointer"
+        >
+          <option value="default">Orden por defecto</option>
+          <option value="az">Alfabético (A - Z)</option>
+          <option value="za">Alfabético (Z - A)</option>
+          <option value="rating">Mejor Valoradas</option>
+          <option value="year">Más Recientes</option>
+        </select>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-gray-200 font-sans selection:bg-[#e5a00d] selection:text-black pb-20 overflow-x-hidden">
@@ -603,14 +686,28 @@ export default function App() {
             
             {searchQuery ? (
                <div>
-                 <div className="flex items-center justify-between mb-6 md:mb-8">
+                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
                     <h2 className="text-xl md:text-3xl font-bold text-white">Resultados de búsqueda</h2>
-                    <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5">
-                      <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
-                      <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                    
+                    <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                      {renderFiltersAndSorting()}
+                      
+                      <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
+                        <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
+                        <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                      </div>
                     </div>
                  </div>
-                 {renderGridOrList(filteredItems)}
+                 {renderGridOrList(paginatedItems)}
+                 
+                 {/* Botón Paginación */}
+                 {processedDisplayItems.length > visibleCount && (
+                    <div className="flex justify-center mt-10">
+                       <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
+                          Cargar más resultados ({processedDisplayItems.length - visibleCount} restantes)
+                       </button>
+                    </div>
+                 )}
                </div>
             ) : selectedCategory ? (
                <div className="animate-in fade-in duration-300">
@@ -618,19 +715,32 @@ export default function App() {
                    <ChevronLeft size={20} /> VOLVER
                  </button>
                  
-                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
+                 <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6 md:mb-8">
                    <h2 className="text-2xl md:text-4xl font-black text-white flex items-center gap-3 tracking-tight">
                      {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
                      {selectedCategory.title}
                    </h2>
                    
-                   <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
-                     <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
-                     <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                   <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                     {renderFiltersAndSorting()}
+
+                     <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
+                       <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
+                       <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                     </div>
                    </div>
                  </div>
 
-                 {renderGridOrList(selectedCategory.items)}
+                 {renderGridOrList(paginatedItems)}
+
+                 {/* Botón Paginación */}
+                 {processedDisplayItems.length > visibleCount && (
+                    <div className="flex justify-center mt-10">
+                       <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
+                          Cargar más películas ({processedDisplayItems.length - visibleCount} restantes)
+                       </button>
+                    </div>
+                 )}
                </div>
             ) : (
                categories.map((cat, idx) => (
@@ -641,7 +751,6 @@ export default function App() {
                        onSelect={setSelectedItem} 
                        onCategoryClick={setSelectedCategory}
                        icon={cat.icon} 
-                       // Eager load SÓLO para la pantalla principal para no dar sensación de lentitud
                        eager={true} 
                    />
                ))
