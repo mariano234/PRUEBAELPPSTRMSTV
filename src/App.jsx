@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid } from 'lucide-react';
+import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid, List as ListIcon } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
 const TMDB_API_KEY = "342815a2b6a677bbc29fd13a6e3c1c3a"; 
@@ -9,7 +9,7 @@ const LANGUAGE_MAP = {
   'es': 'Español', 'es-es': 'Español (España)', 'es-mx': 'Español (Latino)',
   'en': 'Inglés', 'en-us': 'Inglés (EEUU)', 'en-gb': 'Inglés (Reino Unido)',
   'cat': 'Catalán', 'ca': 'Catalán', 'va': 'Valenciano',
-  'fr': 'Francés', 'it': 'Italiano', 'de': 'Alemán', 'ja': 'Japonés', 'ko': 'Coreano', 'pt': 'Portugués'
+  'fr': 'Francés', 'it': 'Italiano', 'de': 'Alemán', 'ja': 'Japonés', 'jp': 'Japonés', 'ko': 'Coreano', 'pt': 'Portugués'
 };
 
 const TMDB_GENRES = {
@@ -56,13 +56,11 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// --- COMPONENTE FILA DE PLEX (Optimizado con Intersection Observer) ---
-const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = false }) => {
-  const rowRef = useRef(null);
-  const containerRef = useRef(null);
+// --- COMPONENTE IMAGEN LAZY (Ahorro Masivo de Memoria RAM) ---
+const LazyImage = ({ src, alt, className }) => {
   const [isVisible, setIsVisible] = useState(false);
-  
-  // Lazy Loading del DOM: Solo renderiza las imágenes si la fila está cerca de la pantalla
+  const imgRef = useRef(null);
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -71,7 +69,38 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = fal
           observer.disconnect();
         }
       },
-      { rootMargin: "300px" } // Carga 300px antes de que aparezca en pantalla
+      { rootMargin: "300px" } // Carga la imagen un poco antes de que aparezca
+    );
+    if (imgRef.current) observer.observe(imgRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <img
+      ref={imgRef}
+      // Solo dibuja la URL real si está cerca de la pantalla. Si no, usa un pixel transparente en base64 para ocupar 0 RAM
+      src={isVisible ? src : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2 3'%3E%3C/svg%3E"}
+      alt={alt}
+      className={`${className} ${isVisible ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500`}
+    />
+  );
+};
+
+// --- COMPONENTE FILA DE PLEX ---
+const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon, isModal = false }) => {
+  const rowRef = useRef(null);
+  const containerRef = useRef(null);
+  const [isVisible, setIsVisible] = useState(false);
+  
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "300px" }
     );
     if (containerRef.current) observer.observe(containerRef.current);
     return () => observer.disconnect();
@@ -91,15 +120,24 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = fal
   const displayItems = items.slice(0, MAX_ITEMS);
   const hasMore = items.length > MAX_ITEMS && !isModal;
 
+  // Escala más pequeña para dentro de los modales
+  const cardWidthClasses = isModal 
+    ? "w-24 sm:w-28 md:w-32 lg:w-36 xl:w-40" 
+    : "w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56";
+
   return (
     <div ref={containerRef} className={`${isModal ? 'mb-4' : 'mb-6 md:mb-10'} relative group/row min-h-[180px]`}>
       <h3 
-        onClick={() => !isModal && onCategoryClick({title, items, icon})}
-        className={`${isModal ? 'text-base md:text-xl px-2' : 'text-lg md:text-2xl px-4 md:px-12'} font-bold text-gray-100 mb-2 md:mb-4 flex items-center gap-2 ${!isModal ? 'hover:text-[#e5a00d] cursor-pointer' : ''} transition-colors w-max`}
+        onClick={() => {
+          if (onTitleClick) onTitleClick();
+          else if (!isModal) onCategoryClick({title, items, icon});
+        }}
+        // Reducimos el margin bottom (mb-0 o mb-1) para compensar el padding-top que añadiremos al carrusel
+        className={`${isModal ? 'text-base md:text-xl px-2' : 'text-lg md:text-2xl px-4 md:px-12'} font-bold text-gray-100 mb-0 md:mb-1 flex items-center gap-2 ${(!isModal || onTitleClick) ? 'hover:text-[#e5a00d] cursor-pointer' : ''} transition-colors w-max`}
       >
         {icon && <span className="text-[#e5a00d] mr-1">{icon}</span>}
         {title} 
-        {!isModal && <ChevronRight size={24} className="text-[#e5a00d] opacity-0 group-hover/row:opacity-100 transition-opacity" />}
+        {(!isModal || onTitleClick) && <ChevronRight size={24} className="text-[#e5a00d] opacity-0 group-hover/row:opacity-100 transition-opacity" />}
       </h3>
       
       {isVisible ? (
@@ -112,11 +150,12 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = fal
             <ChevronRight size={28} />
           </button>
 
-          <div ref={rowRef} className={`flex overflow-x-auto gap-3 md:gap-6 ${isModal ? 'px-2 pb-2 scroll-pl-2' : 'px-4 md:px-12 pb-4 md:pb-6 scroll-pl-4 md:scroll-pl-12'} scrollbar-hide snap-x`} style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          {/* Se ha añadido pt-4 md:pt-6 para que al hacer el scale de hover NO se corte la imagen por arriba */}
+          <div ref={rowRef} className={`flex overflow-x-auto gap-3 md:gap-6 pt-3 md:pt-6 ${isModal ? 'px-2 pb-2 scroll-pl-2' : 'px-4 md:px-12 pb-4 md:pb-6 scroll-pl-4 md:scroll-pl-12'} scrollbar-hide snap-x`} style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             {displayItems.map((item) => (
-              <div key={item.id} className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" onClick={() => onSelect(item)}>
+              <div key={item.id} className={`snap-start shrink-0 ${cardWidthClasses} relative cursor-pointer group transition-all duration-300 flex flex-col`} onClick={() => onSelect(item)}>
                 <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/5 bg-neutral-900 shadow-lg group-hover:scale-105 group-hover:border-[#e5a00d]/50 transition-all duration-300">
-                  <img src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-40" loading="lazy" />
+                  <LazyImage src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover group-hover:opacity-40" />
                   
                   <div className="absolute inset-0 p-2 md:p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-t from-black via-transparent to-transparent">
                      <div className="flex flex-col gap-1 md:gap-2 translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
@@ -143,7 +182,7 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = fal
 
             {hasMore && (
               <div 
-                className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" 
+                className={`snap-start shrink-0 ${cardWidthClasses} relative cursor-pointer group transition-all duration-300 flex flex-col`} 
                 onClick={() => onCategoryClick({title, items, icon})}
               >
                 <div className="relative aspect-[2/3] w-full rounded-lg border border-white/10 bg-neutral-900/40 hover:bg-neutral-800 transition-all duration-300 flex flex-col items-center justify-center gap-2 md:gap-3 text-gray-400 hover:text-[#e5a00d] shadow-lg">
@@ -157,10 +196,10 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = fal
           </div>
         </>
       ) : (
-        /* Skeleton pre-carga: Mantiene la estructura de la web para ahorrar memoria y evitar saltos */
-        <div className={`flex gap-3 md:gap-6 ${isModal ? 'px-2' : 'px-4 md:px-12'} overflow-hidden`}>
+        /* Skeleton pre-carga optimizado */
+        <div className={`flex gap-3 md:gap-6 pt-3 md:pt-6 ${isModal ? 'px-2' : 'px-4 md:px-12'} overflow-hidden`}>
            {[...Array(6)].map((_, i) => (
-             <div key={i} className="shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 aspect-[2/3] bg-neutral-900/40 rounded-lg animate-pulse"></div>
+             <div key={i} className={`shrink-0 ${cardWidthClasses} aspect-[2/3] bg-neutral-900/40 rounded-lg animate-pulse`}></div>
            ))}
         </div>
       )}
@@ -180,6 +219,7 @@ export default function App() {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [isScrolled, setIsScrolled] = useState(false);
+  const [viewMode, setViewMode] = useState('grid'); // Novedad: Toggle Grid/List
 
   const translateLangs = (str) => {
     if (!str || str === 'N/A') return 'N/A';
@@ -374,8 +414,7 @@ export default function App() {
     
     let cats = [];
 
-    // Limite aplicado para que solo haya 15 recomendados
-    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 15), icon: <Star size={22}/> });
+    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items), icon: <Star size={22}/> });
 
     const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0));
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
@@ -406,6 +445,50 @@ export default function App() {
      return items.filter(i => !i.isSaga && i.collection?.id === selectedItem.collection.id && i.id !== selectedItem.id);
   }, [selectedItem, items]);
 
+  const renderGridOrList = (arrayToRender) => {
+    if (viewMode === 'list') {
+      return (
+        <div className="flex flex-col gap-3 md:gap-4 w-full max-w-5xl">
+          {arrayToRender.map(item => (
+            <div key={item.id} className="group cursor-pointer flex gap-4 md:gap-6 bg-neutral-900/30 hover:bg-neutral-800/60 border border-white/5 rounded-xl p-3 md:p-4 transition-all" onClick={() => setSelectedItem(item)}>
+               <div className="w-20 md:w-28 shrink-0 aspect-[2/3] rounded-lg overflow-hidden shadow-lg group-hover:scale-105 transition-transform">
+                 <LazyImage src={item.image} alt={item.title} className="w-full h-full object-cover" />
+               </div>
+               <div className="flex flex-col justify-center flex-1">
+                 <h4 className="font-bold text-sm md:text-xl text-white mb-1 md:mb-2 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h4>
+                 {!item.isSaga && (
+                   <div className="flex flex-wrap items-center gap-2 md:gap-3 text-xs md:text-sm text-gray-400 mb-2 md:mb-3">
+                     <span className="font-bold text-white">{item.year}</span>
+                     {item.rating && item.rating !== 'N/A' && <span className="flex items-center gap-1 text-[#e5a00d]"><Star size={12} fill="currentColor"/> {item.rating}</span>}
+                     {item.videoQuality && <span className="border border-gray-600 px-1.5 py-0.5 rounded text-[10px] md:text-xs">{item.videoQuality}</span>}
+                     <span className="hidden sm:inline">•</span>
+                     <span className="hidden sm:inline">{item.genres.join(', ')}</span>
+                   </div>
+                 )}
+                 {item.isSaga && <div className="text-xs md:text-sm text-[#e5a00d] font-bold tracking-widest mb-2 uppercase">Colección</div>}
+                 <p className="text-xs md:text-sm text-gray-500 line-clamp-2 md:line-clamp-3">{item.description}</p>
+               </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Grid mode
+    return (
+      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3 md:gap-6">
+        {arrayToRender.map(item => (
+          <div key={item.id} className="group cursor-pointer flex flex-col" onClick={() => setSelectedItem(item)}>
+            <div className="aspect-[2/3] rounded-lg overflow-hidden border border-white/5 bg-neutral-900 group-hover:scale-105 transition-transform duration-300 shadow-xl">
+              <LazyImage src={item.image} alt={item.title} className="w-full h-full object-cover" />
+            </div>
+            <h4 className="mt-2 md:mt-3 font-bold text-[11px] md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h4>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-gray-200 font-sans selection:bg-[#e5a00d] selection:text-black pb-20 overflow-x-hidden">
       
@@ -416,7 +499,7 @@ export default function App() {
         ::-webkit-scrollbar-thumb:hover { background: #e5a00d; }
       `}</style>
 
-      {/* --- NAVBAR RESPONSIVO (Arreglado Solapamiento y Horizontal) --- */}
+      {/* --- NAVBAR RESPONSIVO --- */}
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
         <div className="px-4 md:px-12 py-3 md:py-5 flex flex-col sm:flex-row items-center justify-between gap-3 md:gap-10">
           
@@ -459,7 +542,7 @@ export default function App() {
         <>
           {heroItem && !searchQuery && !selectedCategory && (
             <div className="relative h-[60vh] sm:h-[70vh] md:h-[85vh] w-full mb-8 md:mb-12 overflow-hidden mt-14 sm:mt-0">
-               <img src={heroItem.backdrop} className="w-full h-full object-cover" alt="Hero" loading="lazy" />
+               <img src={heroItem.backdrop} className="w-full h-full object-cover" alt="Hero" />
                <div className="absolute inset-0 bg-gradient-to-r from-[#0f0f0f] via-[#0f0f0f]/80 md:via-[#0f0f0f]/60 to-transparent"></div>
                <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-transparent to-transparent"></div>
                <div className="absolute bottom-10 md:bottom-20 left-6 md:left-12 max-w-[90%] md:max-w-3xl z-10">
@@ -479,37 +562,34 @@ export default function App() {
             
             {searchQuery ? (
                <div>
-                 <h2 className="text-2xl font-bold text-white mb-6 md:mb-8">Resultados de búsqueda</h2>
-                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3 md:gap-6">
-                   {filteredItems.map(item => (
-                     <div key={item.id} className="group cursor-pointer flex flex-col" onClick={() => setSelectedItem(item)}>
-                       <div className="aspect-[2/3] rounded-lg overflow-hidden border border-white/5 bg-neutral-900 group-hover:scale-105 transition-transform duration-300 shadow-xl">
-                         <img src={item.image} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
-                       </div>
-                       <h4 className="mt-2 md:mt-3 font-bold text-[11px] md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.title}</h4>
-                     </div>
-                   ))}
+                 <div className="flex items-center justify-between mb-6 md:mb-8">
+                    <h2 className="text-xl md:text-3xl font-bold text-white">Resultados de búsqueda</h2>
+                    <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5">
+                      <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
+                      <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                    </div>
                  </div>
+                 {renderGridOrList(filteredItems)}
                </div>
             ) : selectedCategory ? (
                <div className="animate-in fade-in duration-300">
                  <button onClick={() => setSelectedCategory(null)} className="flex items-center gap-2 text-gray-400 hover:text-[#e5a00d] mb-4 md:mb-8 transition-colors text-sm font-semibold">
                    <ChevronLeft size={20} /> VOLVER
                  </button>
-                 <h2 className="text-2xl md:text-4xl font-black text-white mb-6 md:mb-8 flex items-center gap-3 tracking-tight">
-                   {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
-                   {selectedCategory.title}
-                 </h2>
-                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3 md:gap-6">
-                   {selectedCategory.items.map(item => (
-                     <div key={item.id} className="group cursor-pointer flex flex-col" onClick={() => setSelectedItem(item)}>
-                       <div className="aspect-[2/3] rounded-lg overflow-hidden border border-white/5 bg-neutral-900 group-hover:scale-105 transition-transform duration-300 shadow-xl">
-                         <img src={item.image} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
-                       </div>
-                       <h4 className="mt-2 md:mt-3 font-bold text-[11px] md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h4>
-                     </div>
-                   ))}
+                 
+                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
+                   <h2 className="text-2xl md:text-4xl font-black text-white flex items-center gap-3 tracking-tight">
+                     {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
+                     {selectedCategory.title}
+                   </h2>
+                   
+                   <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
+                     <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
+                     <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                   </div>
                  </div>
+
+                 {renderGridOrList(selectedCategory.items)}
                </div>
             ) : (
                categories.map((cat, idx) => (
@@ -537,9 +617,8 @@ export default function App() {
               <X size={24} />
             </button>
 
-            {/* Arreglo de poster móvil (Vertical y Horizontal) con object-contain */}
             <div className="w-full sm:w-[250px] md:w-[300px] lg:w-[400px] relative shrink-0 h-[35vh] sm:h-auto bg-black">
-                <img src={selectedItem.image} className="w-full h-full object-contain sm:object-cover" alt="Poster" loading="lazy" />
+                <img src={selectedItem.image} className="w-full h-full object-contain sm:object-cover" alt="Poster" />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1a1a1c] via-transparent to-transparent sm:bg-gradient-to-r sm:from-transparent sm:via-[#1a1a1c]/40 sm:to-[#1a1a1c]"></div>
             </div>
 
@@ -559,7 +638,7 @@ export default function App() {
                                  {selectedItem.movies.map(movie => (
                                     <div key={movie.id} className="cursor-pointer group flex flex-col" onClick={() => setSelectedItem(movie)}>
                                        <div className="aspect-[2/3] rounded-md overflow-hidden relative shadow-lg">
-                                           <img src={movie.image} alt={movie.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
+                                           <LazyImage src={movie.image} alt={movie.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                                        </div>
                                        <p className="text-[11px] md:text-xs font-semibold text-gray-200 mt-2 line-clamp-2 leading-normal pb-1 group-hover:text-[#e5a00d]">{movie.title}</p>
                                        <p className="text-[9px] md:text-[10px] text-gray-500">{movie.year}</p>
@@ -624,7 +703,7 @@ export default function App() {
                         )}
 
                         <div className="mt-12 flex flex-col gap-2 shrink-0 pb-4">
-                           {/* Mismo formato de la portada para sagas y similares */}
+                           {/* Mismo formato de la portada para sagas y similares. onClick enlaza a la colección */}
                            {sagaItems.length > 0 && (
                               <MovieRow 
                                   title="Más de esta saga" 
@@ -632,6 +711,7 @@ export default function App() {
                                   onSelect={setSelectedItem} 
                                   icon={<Layers size={18} />} 
                                   isModal={true}
+                                  onTitleClick={() => setSelectedItem(sagas.find(s => s.id === `saga-${selectedItem.collection.id}`))}
                               />
                            )}
 
