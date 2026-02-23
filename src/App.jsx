@@ -291,6 +291,12 @@ export default function App() {
 
   // --- NUEVO: Motor de Autenticación de Discord ---
   useEffect(() => {
+    // 0. Recuperar contraseña guardada si existe (para sobrevivir a recargas de página)
+    const savedPassword = sessionStorage.getItem('stream_password');
+    if (savedPassword) {
+        setStreamPassword(savedPassword);
+    }
+
     // 1. Revisamos si en la URL hay un "?code=..." o la pestaña "?tab=directos"
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
@@ -305,12 +311,20 @@ export default function App() {
         setIsVerifying(true);
         setStreamPassword("Verificando...");
         
-        // 2. Le mandamos el código a nuestro backend
+        // 2. Le mandamos el código a nuestro backend mejorado con control de errores
         fetch(`/.netlify/functions/verificar?code=${code}`)
-            .then(res => res.json())
+            .then(async res => {
+                if (!res.ok) {
+                    // Si el servidor responde con error (ej. 404 o 500), capturamos el texto
+                    const text = await res.text();
+                    throw new Error(`Error HTTP ${res.status}: ${text}`);
+                }
+                return res.json();
+            })
             .then(data => {
                 if(data.success) {
                     setStreamPassword(data.password); // ¡Rol correcto! Mostramos contraseña
+                    sessionStorage.setItem('stream_password', data.password); // Guardamos en caché de sesión
                 } else {
                     setStreamPassword("Rol Denegado");
                     alert("No tienes permiso: " + data.error);
@@ -320,8 +334,11 @@ export default function App() {
                 setIsVerifying(false);
             })
             .catch(err => {
-                setStreamPassword("Error de conexión");
+                console.error("Detalle técnico del error de conexión:", err);
+                setStreamPassword("Error Backend");
+                alert(`No se pudo conectar con el Backend.\n\nDetalle: ${err.message}\n\nAsegúrate de que la función Netlify esté subida correctamente.`);
                 setIsVerifying(false);
+                window.history.replaceState({}, document.title, window.location.pathname + "?tab=directos");
             });
     }
   }, []);
