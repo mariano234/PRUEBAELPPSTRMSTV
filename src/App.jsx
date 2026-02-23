@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star } from 'lucide-react';
+import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
 const TMDB_API_KEY = "342815a2b6a677bbc29fd13a6e3c1c3a"; 
@@ -56,7 +56,7 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// --- COMPONENTE FILA DE PLEX (Con Límite de 11 + Ver más) ---
+// --- COMPONENTE FILA DE PLEX (Con Límite de 11 + "Ver Más") ---
 const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
   const rowRef = useRef(null);
   
@@ -70,15 +70,16 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
 
   if (!items || items.length === 0) return null;
 
-  // Lógica de limitación a 11 elementos
-  const displayItems = items.slice(0, 11);
-  const hasMore = items.length > 11;
+  // Lógica de Límite Estricto para ahorrar memoria
+  const MAX_ITEMS = 11;
+  const displayItems = items.slice(0, MAX_ITEMS);
+  const hasMore = items.length > MAX_ITEMS;
 
   return (
-    <div className="mb-8 md:mb-12 relative group/row">
+    <div className="mb-6 md:mb-12 relative group/row">
       <h3 
         onClick={() => onCategoryClick({title, items, icon})}
-        className="text-lg md:text-2xl font-bold text-gray-100 mb-3 md:mb-5 px-6 md:px-12 flex items-center gap-2 hover:text-[#e5a00d] cursor-pointer transition-colors w-max"
+        className="text-lg md:text-2xl font-bold text-gray-100 mb-2 md:mb-5 px-4 md:px-12 flex items-center gap-2 hover:text-[#e5a00d] cursor-pointer transition-colors w-max"
       >
         {icon && <span className="text-[#e5a00d] mr-1">{icon}</span>}
         {title} 
@@ -93,14 +94,14 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
         <ChevronRight size={28} />
       </button>
 
-      <div ref={rowRef} className="flex overflow-x-auto gap-4 md:gap-6 px-6 md:px-12 pb-6 scrollbar-hide snap-x scroll-pl-6 md:scroll-pl-12" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+      <div ref={rowRef} className="flex overflow-x-auto gap-3 md:gap-6 px-4 md:px-12 pb-4 md:pb-6 scrollbar-hide snap-x scroll-pl-4 md:scroll-pl-12" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
         {displayItems.map((item) => (
           <div key={item.id} className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" onClick={() => onSelect(item)}>
             <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/5 bg-neutral-900 shadow-lg group-hover:scale-105 group-hover:border-[#e5a00d]/50 transition-all duration-300">
               <img src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-40" loading="lazy" />
               
-              <div className="absolute inset-0 p-3 md:p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-t from-black via-transparent to-transparent">
-                 <div className="flex flex-col gap-2 translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+              <div className="absolute inset-0 p-2 md:p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-t from-black via-transparent to-transparent">
+                 <div className="flex flex-col gap-1 md:gap-2 translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
                     <div className="flex items-center gap-1 flex-wrap">
                         {!item.isSaga && (
                           <span className={`backdrop-blur-md text-[9px] md:text-xs font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border ${item.videoQuality === '4K' ? 'bg-[#e5a00d]/90 text-black border-[#e5a00d]' : 'bg-white/20 text-white border-white/20'}`}>
@@ -116,23 +117,23 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
                  </div>
               </div>
             </div>
-            <h3 className="mt-3 text-xs md:text-sm font-semibold text-gray-200 line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h3>
+            <h3 className="mt-2 md:mt-3 text-xs md:text-sm font-semibold text-gray-200 line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h3>
             {!item.isSaga && <div className="text-[10px] md:text-xs text-gray-500 font-medium">{item.year}</div>}
             {item.isSaga && <div className="text-[10px] md:text-xs text-[#e5a00d] font-medium tracking-wide">COLECCIÓN</div>}
           </div>
         ))}
 
-        {/* --- TARJETA "VER MÁS" --- */}
+        {/* --- TARJETA BOTÓN "VER MÁS" --- */}
         {hasMore && (
           <div 
             className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" 
             onClick={() => onCategoryClick({title, items, icon})}
           >
-            <div className="relative aspect-[2/3] w-full rounded-lg border border-white/10 bg-neutral-900/40 hover:bg-neutral-800 transition-all duration-300 flex flex-col items-center justify-center gap-3 text-gray-400 hover:text-[#e5a00d] shadow-lg">
+            <div className="relative aspect-[2/3] w-full rounded-lg border border-white/10 bg-neutral-900/40 hover:bg-neutral-800 transition-all duration-300 flex flex-col items-center justify-center gap-2 md:gap-3 text-gray-400 hover:text-[#e5a00d] shadow-lg">
                <div className="p-3 md:p-4 rounded-full bg-black/40 group-hover:scale-110 transition-transform">
-                 <ChevronRight size={32} />
+                 <Grid size={28} className="md:w-8 md:h-8" />
                </div>
-               <span className="font-bold text-xs md:text-sm">Ver todos ({items.length})</span>
+               <span className="font-bold text-xs md:text-sm text-center px-2">Ver todos ({items.length})</span>
             </div>
           </div>
         )}
@@ -244,11 +245,11 @@ export default function App() {
       const idxLang = getIdx(['idioma', 'lenguaje']);
       const idxQual = getIdx(['calidad']);
       const idxGen  = getIdx(['genero', 'género']);
+      
       const idxLink = 8; 
 
       const rawRows = parsedData.slice(1).filter(r => r[idxTitle]);
 
-      // Lógica de carga en lotes (Chunking) para no ahogar al navegador
       const chunkSize = 15;
       const enriched = [];
       
@@ -388,11 +389,11 @@ export default function App() {
         ::-webkit-scrollbar-thumb:hover { background: #e5a00d; }
       `}</style>
 
-      {/* --- NAVBAR RESPONSIVO --- */}
+      {/* --- NAVBAR RESPONSIVO (Arreglado Solapamiento Móvil) --- */}
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
-        <div className="px-4 md:px-12 py-3 md:py-5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 md:gap-10">
+        <div className="px-4 md:px-12 py-3 md:py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 md:gap-10">
           
-          <div className="flex items-center gap-6 md:gap-10">
+          <div className="flex w-full sm:w-auto items-center justify-between gap-6 md:gap-10">
             <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer" onClick={() => {setSearchQuery(""); setSelectedCategory(null);}}>
               <ChevronRight size={28} className="-mr-2 md:-mr-3" />
               <span>ElPepe<span className="text-white font-light">Streams</span></span>
@@ -402,7 +403,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className="relative group w-full sm:w-auto flex-1 sm:flex-none max-w-md order-last sm:order-none">
+          <div className="relative group w-full sm:flex-1 sm:max-w-md">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#e5a00d] transition-colors" size={16} />
             <input 
               type="text" 
@@ -430,8 +431,8 @@ export default function App() {
       ) : (
         <>
           {heroItem && !searchQuery && !selectedCategory && (
-            <div className="relative h-[60vh] sm:h-[70vh] md:h-[85vh] w-full mb-8 md:mb-12 overflow-hidden">
-               <img src={heroItem.backdrop} className="w-full h-full object-cover" alt="Hero" />
+            <div className="relative h-[60vh] sm:h-[70vh] md:h-[85vh] w-full mb-8 md:mb-12 overflow-hidden mt-14 sm:mt-0">
+               <img src={heroItem.backdrop} className="w-full h-full object-cover" alt="Hero" loading="lazy" />
                <div className="absolute inset-0 bg-gradient-to-r from-[#0f0f0f] via-[#0f0f0f]/80 md:via-[#0f0f0f]/60 to-transparent"></div>
                <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-transparent to-transparent"></div>
                <div className="absolute bottom-10 md:bottom-20 left-6 md:left-12 max-w-[90%] md:max-w-3xl z-10">
@@ -447,38 +448,38 @@ export default function App() {
             </div>
           )}
 
-          <div className={searchQuery || selectedCategory ? 'pt-32 md:pt-36 px-6 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
+          <div className={searchQuery || selectedCategory ? 'pt-32 md:pt-36 px-4 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
             
             {searchQuery ? (
                <div>
-                 <h2 className="text-2xl font-bold text-white mb-8">Resultados de búsqueda</h2>
-                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4 md:gap-6">
+                 <h2 className="text-2xl font-bold text-white mb-6 md:mb-8">Resultados de búsqueda</h2>
+                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3 md:gap-6">
                    {filteredItems.map(item => (
                      <div key={item.id} className="group cursor-pointer flex flex-col" onClick={() => setSelectedItem(item)}>
                        <div className="aspect-[2/3] rounded-lg overflow-hidden border border-white/5 bg-neutral-900 group-hover:scale-105 transition-transform duration-300 shadow-xl">
-                         <img src={item.image} className="w-full h-full object-cover" alt={item.title} />
+                         <img src={item.image} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
                        </div>
-                       <h4 className="mt-3 font-bold text-xs md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.title}</h4>
+                       <h4 className="mt-2 md:mt-3 font-bold text-[11px] md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.title}</h4>
                      </div>
                    ))}
                  </div>
                </div>
             ) : selectedCategory ? (
                <div className="animate-in fade-in duration-300">
-                 <button onClick={() => setSelectedCategory(null)} className="flex items-center gap-2 text-gray-400 hover:text-[#e5a00d] mb-6 md:mb-8 transition-colors text-sm font-semibold">
+                 <button onClick={() => setSelectedCategory(null)} className="flex items-center gap-2 text-gray-400 hover:text-[#e5a00d] mb-4 md:mb-8 transition-colors text-sm font-semibold">
                    <ChevronLeft size={20} /> VOLVER
                  </button>
-                 <h2 className="text-3xl md:text-4xl font-black text-white mb-8 flex items-center gap-3 tracking-tight">
+                 <h2 className="text-2xl md:text-4xl font-black text-white mb-6 md:mb-8 flex items-center gap-3 tracking-tight">
                    {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
                    {selectedCategory.title}
                  </h2>
-                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4 md:gap-6">
+                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3 md:gap-6">
                    {selectedCategory.items.map(item => (
                      <div key={item.id} className="group cursor-pointer flex flex-col" onClick={() => setSelectedItem(item)}>
                        <div className="aspect-[2/3] rounded-lg overflow-hidden border border-white/5 bg-neutral-900 group-hover:scale-105 transition-transform duration-300 shadow-xl">
-                         <img src={item.image} className="w-full h-full object-cover" alt={item.title} />
+                         <img src={item.image} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
                        </div>
-                       <h4 className="mt-3 font-bold text-xs md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h4>
+                       <h4 className="mt-2 md:mt-3 font-bold text-[11px] md:text-sm line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h4>
                      </div>
                    ))}
                  </div>
@@ -509,8 +510,8 @@ export default function App() {
               <X size={24} />
             </button>
 
-            <div className="w-full md:w-[300px] lg:w-[400px] relative shrink-0 h-[40vh] md:h-auto">
-                <img src={selectedItem.image} className="w-full h-full object-cover" alt="Poster" />
+            <div className="w-full md:w-[300px] lg:w-[400px] relative shrink-0 h-[35vh] md:h-auto">
+                <img src={selectedItem.image} className="w-full h-full object-cover" alt="Poster" loading="lazy" />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1a1a1c] via-[#1a1a1c]/20 to-transparent md:bg-gradient-to-r md:from-transparent md:via-[#1a1a1c]/40 md:to-[#1a1a1c]"></div>
             </div>
 
@@ -526,14 +527,14 @@ export default function App() {
                         <div className="mt-4 flex flex-col gap-8 shrink-0 pb-4">
                            <div className="w-full">
                               <h4 className="text-white font-bold text-sm md:text-base mb-4 border-b border-white/10 pb-2">Películas en tu biblioteca ({selectedItem.movies.length})</h4>
-                              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-4">
+                              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
                                  {selectedItem.movies.map(movie => (
                                     <div key={movie.id} className="cursor-pointer group flex flex-col" onClick={() => setSelectedItem(movie)}>
                                        <div className="aspect-[2/3] rounded-md overflow-hidden relative shadow-lg">
-                                           <img src={movie.image} alt={movie.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                           <img src={movie.image} alt={movie.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
                                        </div>
-                                       <p className="text-xs font-semibold text-gray-200 mt-2 line-clamp-2 leading-normal pb-1 group-hover:text-[#e5a00d]">{movie.title}</p>
-                                       <p className="text-[10px] text-gray-500">{movie.year}</p>
+                                       <p className="text-[11px] md:text-xs font-semibold text-gray-200 mt-2 line-clamp-2 leading-normal pb-1 group-hover:text-[#e5a00d]">{movie.title}</p>
+                                       <p className="text-[9px] md:text-[10px] text-gray-500">{movie.year}</p>
                                     </div>
                                  ))}
                               </div>
@@ -585,23 +586,23 @@ export default function App() {
                         <p className="text-gray-400 text-sm md:text-base lg:text-lg font-light leading-relaxed mb-8">{selectedItem.description}</p>
                         
                         {selectedItem.link !== '#' ? (
-                           <a href={selectedItem.link} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 bg-[#e5a00d] hover:bg-[#c9890a] text-black font-black py-4 px-6 md:px-10 rounded-full text-base md:text-lg transition-all hover:scale-105 shadow-xl shadow-[#e5a00d]/10 w-full md:w-max group shrink-0">
+                           <a href={selectedItem.link} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 bg-[#e5a00d] hover:bg-[#c9890a] text-black font-black py-4 px-6 md:px-10 rounded-full text-sm md:text-lg transition-all hover:scale-105 shadow-xl shadow-[#e5a00d]/10 w-full md:w-max group shrink-0">
                              <Download size={22} className="group-hover:translate-y-1 transition-transform" /> DESCARGAR A MI BIBLIOTECA
                            </a>
                         ) : (
-                           <button disabled className="flex items-center justify-center gap-3 bg-neutral-800 text-gray-500 font-black py-4 px-6 md:px-10 rounded-full text-base md:text-lg cursor-not-allowed w-full md:w-max shrink-0">
+                           <button disabled className="flex items-center justify-center gap-3 bg-neutral-800 text-gray-500 font-black py-4 px-6 md:px-10 rounded-full text-sm md:text-lg cursor-not-allowed w-full md:w-max shrink-0">
                              <AlertTriangle size={22} /> ENLACE NO DISPONIBLE
                            </button>
                         )}
 
-                        <div className="mt-12 flex flex-col gap-8 shrink-0 pb-4">
+                        <div className="mt-12 flex flex-col gap-6 md:gap-8 shrink-0 pb-4">
                            {sagaItems.length > 0 && (
                               <div className="w-full">
                                  <h4 className="text-white font-bold text-sm md:text-base mb-4 flex items-center gap-2"><Layers size={18} className="text-[#e5a00d]"/> Más de esta saga</h4>
                                  <div className="flex gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
                                     {sagaItems.map(item => (
                                        <div key={item.id} className="snap-start shrink-0 w-24 md:w-32 cursor-pointer group" onClick={() => setSelectedItem(item)}>
-                                          <img src={item.image} alt={item.title} className="w-full aspect-[2/3] object-cover rounded-md group-hover:scale-105 transition-transform" />
+                                          <img src={item.image} alt={item.title} className="w-full aspect-[2/3] object-cover rounded-md group-hover:scale-105 transition-transform" loading="lazy" />
                                        </div>
                                     ))}
                                  </div>
@@ -614,7 +615,7 @@ export default function App() {
                                  <div className="flex gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
                                     {items.filter(i => !i.isSaga && i.id !== selectedItem.id && i.genres.some(g => selectedItem.genres.includes(g))).slice(0, 10).map(item => (
                                        <div key={item.id} className="snap-start shrink-0 w-24 md:w-32 cursor-pointer group" onClick={() => setSelectedItem(item)}>
-                                          <img src={item.image} alt={item.title} className="w-full aspect-[2/3] object-cover rounded-md group-hover:scale-105 transition-transform shadow-md" />
+                                          <img src={item.image} alt={item.title} className="w-full aspect-[2/3] object-cover rounded-md group-hover:scale-105 transition-transform shadow-md" loading="lazy" />
                                        </div>
                                     ))}
                                  </div>
