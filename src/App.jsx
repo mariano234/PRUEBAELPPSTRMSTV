@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid, List as ListIcon, Filter, ArrowDownWideNarrow } from 'lucide-react';
+import { Search, Home, Film, Download, X, Info, ChevronRight, ChevronLeft, AlertTriangle, Monitor, Layers, Star, Grid, List as ListIcon, Filter, ArrowDownWideNarrow, Globe, Calendar, Tv, Radio } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
 const TMDB_API_KEY = "342815a2b6a677bbc29fd13a6e3c1c3a"; 
@@ -8,7 +8,8 @@ const SHEET_ID = "104RB6GK9_m_nzIakTU3MJLaDJPwt9fYmfHF3ikyixFE";
 const LANGUAGE_MAP = {
   'es': 'Español', 'es-es': 'Español (España)', 'es-mx': 'Español (Latino)',
   'en': 'Inglés', 'en-us': 'Inglés (EEUU)', 'en-gb': 'Inglés (Reino Unido)',
-  'cat': 'Catalán', 'ca': 'Catalán', 'va': 'Valenciano',
+  'cat': 'Catalán', 'ca': 'Catalán', 'va': 'Valenciano', 'val': 'Valenciano',
+  'eus': 'Euskera', 'eu': 'Euskera', 'gal': 'Gallego', 'gl': 'Gallego',
   'fr': 'Francés', 'it': 'Italiano', 'de': 'Alemán', 'ja': 'Japonés', 'jp': 'Japonés', 'ko': 'Coreano', 'pt': 'Portugués'
 };
 
@@ -261,11 +262,21 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isScrolled, setIsScrolled] = useState(false);
   const [viewMode, setViewMode] = useState('grid'); 
+  
+  // Estado para controlar la pestaña activa (inicio, pelis, series, directos)
+  const [activeTab, setActiveTab] = useState('inicio'); 
 
-  // Estados de paginación y filtros
+  // NUEVO: Estados para la Autenticación de Discord
+  const [streamPassword, setStreamPassword] = useState("••••••••••••");
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  // Estados de paginación y filtros cruzados múltiples
   const [visibleCount, setVisibleCount] = useState(100);
   const [sortBy, setSortBy] = useState('default');
-  const [activeGenreFilter, setActiveGenreFilter] = useState('All');
+  const [filterGenres, setFilterGenres] = useState([]);
+  const [filterQualities, setFilterQualities] = useState([]);
+  const [filterLanguages, setFilterLanguages] = useState([]);
+  const [filterYears, setFilterYears] = useState([]);
 
   useEffect(() => {
     document.title = "ElPepeStreams";
@@ -276,6 +287,43 @@ export default function App() {
       document.head.appendChild(link);
     }
     link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>";
+  }, []);
+
+  // --- NUEVO: Motor de Autenticación de Discord ---
+  useEffect(() => {
+    // 1. Revisamos si en la URL hay un "?code=..." o la pestaña "?tab=directos"
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const tab = urlParams.get('tab');
+    
+    // Si la URL indica directos o volvemos de loguearnos, activamos la pestaña
+    if (tab === 'directos' || code) {
+        setActiveTab('directos');
+    }
+    
+    if (code) {
+        setIsVerifying(true);
+        setStreamPassword("Verificando...");
+        
+        // 2. Le mandamos el código a nuestro backend
+        fetch(`/.netlify/functions/verificar?code=${code}`)
+            .then(res => res.json())
+            .then(data => {
+                if(data.success) {
+                    setStreamPassword(data.password); // ¡Rol correcto! Mostramos contraseña
+                } else {
+                    setStreamPassword("Rol Denegado");
+                    alert("No tienes permiso: " + data.error);
+                }
+                // Limpiamos la URL para dejar solo ?tab=directos (y borrar el código largo)
+                window.history.replaceState({}, document.title, window.location.pathname + "?tab=directos");
+                setIsVerifying(false);
+            })
+            .catch(err => {
+                setStreamPassword("Error de conexión");
+                setIsVerifying(false);
+            });
+    }
   }, []);
 
   const translateLangs = (str) => {
@@ -457,7 +505,10 @@ export default function App() {
   useEffect(() => {
      setVisibleCount(100);
      setSortBy('default');
-     setActiveGenreFilter('All');
+     setFilterGenres([]);
+     setFilterQualities([]);
+     setFilterLanguages([]);
+     setFilterYears([]);
      if (searchQuery) {
          setSelectedCategory(null);
          window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -467,7 +518,10 @@ export default function App() {
   useEffect(() => {
      setVisibleCount(100);
      setSortBy('default');
-     setActiveGenreFilter('All');
+     setFilterGenres([]);
+     setFilterQualities([]);
+     setFilterLanguages([]);
+     setFilterYears([]);
      if (selectedCategory) {
          window.scrollTo({ top: 0, behavior: 'smooth' });
      }
@@ -484,6 +538,13 @@ export default function App() {
     // Mejor valoradas ahora carga el Top 100 (activando el Ver más)
     const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 100);
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
+
+    // Últimos Lanzamientos
+    const currentYear = new Date().getFullYear();
+    const recentReleases = [...items].filter(i => parseInt(i.year) === currentYear || parseInt(i.year) === currentYear - 1).sort((a, b) => parseInt(b.year) - parseInt(a.year));
+    if (recentReleases.length > 0) {
+        cats.push({ title: 'Últimos Lanzamientos', items: recentReleases, icon: <Film size={22}/> });
+    }
 
     if (sagas.length > 0) {
         cats.push({ title: 'Sagas y Colecciones', items: shuffleArray(sagas), icon: <Layers size={22}/> });
@@ -505,7 +566,7 @@ export default function App() {
     ? items.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || i.description.toLowerCase().includes(searchQuery.toLowerCase()))
     : (selectedCategory ? selectedCategory.items : []);
 
-  // Lista dinámica de géneros para el filtro desplegable
+  // Listas dinámicas para los filtros desplegables
   const availableGenres = useMemo(() => {
     const genres = new Set();
     rawDisplayItems.forEach(i => {
@@ -514,12 +575,54 @@ export default function App() {
     return Array.from(genres).sort();
   }, [rawDisplayItems]);
 
-  // Aplicación de Filtros y Ordenación
+  const availableQualities = useMemo(() => {
+    const qualities = new Set();
+    rawDisplayItems.forEach(i => {
+      if(i.videoQuality && i.videoQuality !== 'N/A') qualities.add(i.videoQuality);
+    });
+    // Orden descendente (4K, FHD, HD, SD)
+    return Array.from(qualities).sort((a, b) => b.localeCompare(a));
+  }, [rawDisplayItems]);
+
+  const availableLanguages = useMemo(() => {
+    const languages = new Set();
+    rawDisplayItems.forEach(i => {
+      if(i.language && i.language !== 'N/A') {
+         // Separa "Español, Inglés" para que no salgan idiomas duplicados
+         i.language.split(',').forEach(l => languages.add(l.trim()));
+      }
+    });
+    return Array.from(languages).sort();
+  }, [rawDisplayItems]);
+
+  const availableYears = useMemo(() => {
+    const years = new Set();
+    rawDisplayItems.forEach(i => {
+      if(i.year && i.year !== '?' && i.year !== 'N/A') years.add(i.year.toString());
+    });
+    return Array.from(years).sort((a, b) => parseInt(b) - parseInt(a));
+  }, [rawDisplayItems]);
+
+  // Aplicación de Filtros Múltiples Acumulativos y Ordenación
   const processedDisplayItems = useMemo(() => {
     let result = [...rawDisplayItems];
     
-    if (activeGenreFilter !== 'All') {
-      result = result.filter(i => i.genres?.includes(activeGenreFilter));
+    // Si seleccionas varios (ej: Acción, Comedia), busca películas que tengan al menos uno de ellos.
+    if (filterGenres.length > 0) {
+      result = result.filter(i => i.genres?.some(g => filterGenres.includes(g)));
+    }
+    if (filterQualities.length > 0) {
+      result = result.filter(i => filterQualities.includes(i.videoQuality));
+    }
+    if (filterLanguages.length > 0) {
+      result = result.filter(i => {
+         if (!i.language) return false;
+         const itemLangs = i.language.split(',').map(l => l.trim());
+         return itemLangs.some(l => filterLanguages.includes(l));
+      });
+    }
+    if (filterYears.length > 0) {
+      result = result.filter(i => filterYears.includes(i.year?.toString()));
     }
 
     if (sortBy === 'az') result.sort((a, b) => (a.displayTitle || a.title).localeCompare(b.displayTitle || b.title));
@@ -528,7 +631,7 @@ export default function App() {
     else if (sortBy === 'year') result.sort((a, b) => parseInt(b.year || 0) - parseInt(a.year || 0));
 
     return result;
-  }, [rawDisplayItems, activeGenreFilter, sortBy]);
+  }, [rawDisplayItems, filterGenres, filterQualities, filterLanguages, filterYears, sortBy]);
 
   // Paginación de Resultados
   const paginatedItems = processedDisplayItems.slice(0, visibleCount);
@@ -583,35 +686,135 @@ export default function App() {
     );
   };
 
-  const renderFiltersAndSorting = () => (
-    <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full md:w-auto mt-4 md:mt-0">
-      <div className="relative flex-1 md:flex-none">
-        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
-        <select 
-          value={activeGenreFilter} 
-          onChange={e => setActiveGenreFilter(e.target.value)} 
-          className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-9 pr-8 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full md:w-44 cursor-pointer"
-        >
-          <option value="All">Todos los géneros</option>
-          {availableGenres.map(g => <option key={g} value={g}>{g}</option>)}
-        </select>
+  const renderFiltersAndSorting = () => {
+    const hasActiveFilters = filterGenres.length > 0 || filterQualities.length > 0 || filterLanguages.length > 0 || filterYears.length > 0;
+
+    return (
+      <div className="flex flex-col gap-3 md:gap-4 w-full lg:w-auto mt-4 md:mt-0">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full">
+          
+          {/* Filtro de Género */}
+          <div className="relative flex-1 min-w-[130px] lg:flex-none">
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+            <select 
+              value="default" 
+              onChange={e => {
+                if (e.target.value !== 'default' && !filterGenres.includes(e.target.value)) {
+                  setFilterGenres([...filterGenres, e.target.value]);
+                }
+              }} 
+              className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
+            >
+              <option value="default" disabled>+ Género</option>
+              {availableGenres.filter(g => !filterGenres.includes(g)).map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+
+          {/* Filtro de Calidad */}
+          <div className="relative flex-1 min-w-[110px] lg:flex-none">
+            <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+            <select 
+              value="default" 
+              onChange={e => {
+                if (e.target.value !== 'default' && !filterQualities.includes(e.target.value)) {
+                  setFilterQualities([...filterQualities, e.target.value]);
+                }
+              }} 
+              className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
+            >
+              <option value="default" disabled>+ Calidad</option>
+              {availableQualities.filter(q => !filterQualities.includes(q)).map(q => <option key={q} value={q}>{q}</option>)}
+            </select>
+          </div>
+
+          {/* Filtro de Idioma */}
+          <div className="relative flex-1 min-w-[120px] lg:flex-none">
+            <Globe className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+            <select 
+              value="default" 
+              onChange={e => {
+                if (e.target.value !== 'default' && !filterLanguages.includes(e.target.value)) {
+                  setFilterLanguages([...filterLanguages, e.target.value]);
+                }
+              }} 
+              className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
+            >
+              <option value="default" disabled>+ Idioma</option>
+              {availableLanguages.filter(l => !filterLanguages.includes(l)).map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+
+          {/* Filtro de Año */}
+          <div className="relative flex-1 min-w-[100px] lg:flex-none">
+            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+            <select 
+              value="default" 
+              onChange={e => {
+                if (e.target.value !== 'default' && !filterYears.includes(e.target.value)) {
+                  setFilterYears([...filterYears, e.target.value]);
+                }
+              }} 
+              className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
+            >
+              <option value="default" disabled>+ Año</option>
+              {availableYears.filter(y => !filterYears.includes(y)).map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+
+          {/* Ordenación */}
+          <div className="relative flex-1 min-w-[150px] lg:flex-none">
+            <ArrowDownWideNarrow className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+            <select 
+              value={sortBy} 
+              onChange={e => setSortBy(e.target.value)} 
+              className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
+            >
+              <option value="default">Orden por defecto</option>
+              <option value="az">Alfabético (A - Z)</option>
+              <option value="za">Alfabético (Z - A)</option>
+              <option value="rating">Mejor Valoradas</option>
+              <option value="year">Más Recientes</option>
+            </select>
+          </div>
+        </div>
+
+        {/* --- PÍLDORAS DE FILTROS ACTIVOS --- */}
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <span className="text-xs text-gray-500 font-medium mr-1">Filtros:</span>
+            
+            {filterGenres.map(g => (
+              <span key={g} onClick={() => setFilterGenres(filterGenres.filter(x => x !== g))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
+                {g} <X size={12} />
+              </span>
+            ))}
+            
+            {filterQualities.map(q => (
+              <span key={q} onClick={() => setFilterQualities(filterQualities.filter(x => x !== q))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
+                {q} <X size={12} />
+              </span>
+            ))}
+            
+            {filterLanguages.map(l => (
+              <span key={l} onClick={() => setFilterLanguages(filterLanguages.filter(x => x !== l))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
+                {l} <X size={12} />
+              </span>
+            ))}
+
+            {filterYears.map(y => (
+              <span key={y} onClick={() => setFilterYears(filterYears.filter(x => x !== y))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
+                {y} <X size={12} />
+              </span>
+            ))}
+
+            <button onClick={() => { setFilterGenres([]); setFilterQualities([]); setFilterLanguages([]); setFilterYears([]); }} className="text-[11px] text-gray-400 hover:text-white underline ml-2 transition-colors">
+              Limpiar todos
+            </button>
+          </div>
+        )}
       </div>
-      <div className="relative flex-1 md:flex-none">
-        <ArrowDownWideNarrow className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
-        <select 
-          value={sortBy} 
-          onChange={e => setSortBy(e.target.value)} 
-          className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-9 pr-8 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full md:w-48 cursor-pointer"
-        >
-          <option value="default">Orden por defecto</option>
-          <option value="az">Alfabético (A - Z)</option>
-          <option value="za">Alfabético (Z - A)</option>
-          <option value="rating">Mejor Valoradas</option>
-          <option value="year">Más Recientes</option>
-        </select>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-gray-200 font-sans selection:bg-[#e5a00d] selection:text-black pb-20 overflow-x-hidden">
@@ -623,31 +826,39 @@ export default function App() {
         ::-webkit-scrollbar-thumb:hover { background: #e5a00d; }
       `}</style>
 
-      {/* --- NAVBAR RESPONSIVO --- */}
+      {/* --- NAVBAR RESPONSIVO (Actualizado con Pestañas) --- */}
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
-        <div className="px-4 md:px-12 py-3 md:py-5 flex flex-col sm:flex-row items-center justify-between gap-3 md:gap-10">
+        <div className="px-4 md:px-12 py-3 md:py-4 flex flex-col lg:flex-row items-center justify-between gap-3 md:gap-6">
           
-          <div className="flex w-full sm:w-auto items-center justify-between gap-6 md:gap-10">
-            <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer" onClick={() => {setSearchQuery(""); setSelectedCategory(null);}}>
+          <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-8 w-full lg:w-auto">
+            {/* Logo */}
+            <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer shrink-0" onClick={() => {setActiveTab('inicio'); setSearchQuery(""); setSelectedCategory(null);}}>
               <ChevronRight size={28} className="-mr-2 md:-mr-3" />
               <span>ElPepe<span className="text-white font-light">Streams</span></span>
             </div>
-            <button onClick={() => {setSearchQuery(""); setSelectedCategory(null);}} className="hidden md:flex items-center gap-2 text-white hover:text-[#e5a00d] transition-colors font-bold tracking-wide">
-              <Home size={20} /> INICIO
-            </button>
+
+            {/* Pestañas de Navegación */}
+            <div className="flex items-center gap-3 md:gap-6 text-[11px] sm:text-xs md:text-sm font-bold tracking-wide overflow-x-auto w-full sm:w-auto scrollbar-hide justify-center sm:justify-start pb-1 sm:pb-0">
+               <button onClick={() => {setActiveTab('inicio'); setSearchQuery(""); setSelectedCategory(null);}} className={`flex items-center gap-1.5 transition-colors whitespace-nowrap px-2 py-1 rounded-md ${activeTab === 'inicio' ? 'text-[#e5a00d] bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Home size={16} className="hidden sm:block"/> INICIO</button>
+               <button onClick={() => {setActiveTab('pelis'); setSearchQuery(""); setSelectedCategory(null);}} className={`flex items-center gap-1.5 transition-colors whitespace-nowrap px-2 py-1 rounded-md ${activeTab === 'pelis' ? 'text-[#e5a00d] bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Film size={16} className="hidden sm:block"/> PELIS</button>
+               <button onClick={() => {setActiveTab('series'); setSearchQuery(""); setSelectedCategory(null);}} className={`flex items-center gap-1.5 transition-colors whitespace-nowrap px-2 py-1 rounded-md ${activeTab === 'series' ? 'text-[#e5a00d] bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Tv size={16} className="hidden sm:block"/> SERIES</button>
+               <button onClick={() => {setActiveTab('directos'); setSearchQuery(""); setSelectedCategory(null);}} className={`flex items-center gap-1.5 transition-colors whitespace-nowrap px-2 py-1 rounded-md ${activeTab === 'directos' ? 'text-[#e5a00d] bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Radio size={16} className="hidden sm:block"/> DIRECTOS</button>
+            </div>
           </div>
 
-          <div className="relative group w-full sm:flex-1 sm:max-w-md">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#e5a00d] transition-colors" size={16} />
-            <input 
-              type="text" 
-              placeholder="Buscar películas..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-neutral-900/60 border border-white/10 rounded-full py-2.5 pl-10 md:pl-12 pr-4 md:pr-6 w-full focus:outline-none focus:border-[#e5a00d] focus:bg-black transition-all text-xs md:text-sm backdrop-blur-sm"
-            />
-          </div>
-
+          {/* Buscador (Se oculta en Directos y Series por ahora) */}
+          {(activeTab === 'inicio' || activeTab === 'pelis') && (
+            <div className="relative group w-full lg:max-w-md shrink-0">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#e5a00d] transition-colors" size={16} />
+              <input 
+                type="text" 
+                placeholder="Buscar películas..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-neutral-900/60 border border-white/10 rounded-full py-2.5 pl-10 md:pl-12 pr-4 md:pr-6 w-full focus:outline-none focus:border-[#e5a00d] focus:bg-black transition-all text-xs md:text-sm backdrop-blur-sm"
+              />
+            </div>
+          )}
         </div>
       </nav>
 
@@ -664,98 +875,171 @@ export default function App() {
         </div>
       ) : (
         <>
-          {heroItem && !searchQuery && !selectedCategory && (
-            <div className="relative h-[60vh] sm:h-[70vh] md:h-[85vh] w-full mb-8 md:mb-12 overflow-hidden mt-14 sm:mt-0">
-               <img src={heroItem.backdrop} className="w-full h-full object-cover" alt="Hero" />
-               <div className="absolute inset-0 bg-gradient-to-r from-[#0f0f0f] via-[#0f0f0f]/80 md:via-[#0f0f0f]/60 to-transparent"></div>
-               <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-transparent to-transparent"></div>
-               <div className="absolute bottom-10 md:bottom-20 left-6 md:left-12 max-w-[90%] md:max-w-3xl z-10">
-                  <div className="flex items-center gap-2 text-[#e5a00d] font-bold text-[10px] md:text-xs uppercase tracking-[0.2em] mb-3 md:mb-4">
-                    <Film size={14} /> RECOMENDADO PARA TI
-                  </div>
-                  <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white mb-2 md:mb-4 leading-snug pb-2 drop-shadow-2xl line-clamp-2 md:line-clamp-3 break-words pr-4">{heroItem.title}</h1>
-                  <p className="text-gray-300 text-xs sm:text-sm md:text-base lg:text-lg line-clamp-2 md:line-clamp-3 font-light mb-4 md:mb-6 max-w-xl leading-relaxed">{heroItem.description}</p>
-                  <button onClick={() => setSelectedItem(heroItem)} className="flex items-center gap-2 md:gap-3 bg-[#e5a00d] hover:bg-[#c9890a] text-black font-extrabold py-2 md:py-3 px-6 md:px-8 rounded-full transition-all hover:scale-105 shadow-2xl shadow-[#e5a00d]/20 w-max text-xs md:text-base">
-                    <Info size={20} className="md:w-6 md:h-6" /> VER DETALLES
-                  </button>
-               </div>
+          {/* --- VISTA: DIRECTOS --- */}
+          {activeTab === 'directos' && (
+            <div className="pt-32 md:pt-28 px-4 md:px-12 flex flex-col lg:flex-row gap-4 md:gap-6 h-[calc(100vh-2rem)] pb-8 animate-in fade-in duration-500">
+                
+                {/* Reproductor de Video (AngelThump Integrado de forma dinámica para evitar bloqueos) */}
+                <div className="flex-1 bg-black rounded-xl overflow-hidden border border-white/10 relative shadow-2xl min-h-[40vh] lg:min-h-0 flex items-center justify-center">
+                    <div className="absolute inset-0 w-full h-full">
+                        <iframe 
+                           title="AngelThump Stream"
+                           src={`https://player.angelthump.com/?channel=elpintaunas&parent=${window.location.hostname || 'localhost'}`} 
+                           width="100%"
+                           height="100%"
+                           frameBorder="0"
+                           allow="autoplay; fullscreen"
+                           allowFullScreen
+                           style={{ width: '100%', height: '100%', border: 'none' }}
+                        ></iframe>
+                    </div>
+                </div>
+                
+                {/* Sistema de Contraseña por Rol de Discord */}
+                <div className="w-full lg:w-[350px] xl:w-[400px] h-auto lg:h-full bg-[#36393f] rounded-xl overflow-hidden border border-white/10 flex flex-col shadow-2xl shrink-0 p-6 relative justify-center">
+                    <div className="absolute top-0 left-0 right-0 bg-[#202225] p-3 border-b border-black/20 flex justify-center items-center">
+                       <span className="font-bold text-white text-sm flex items-center gap-2"><Layers size={16} className="text-[#5865F2]" /> Acceso Premium</span>
+                    </div>
+                    
+                    <div className="flex flex-col items-center text-center mt-8">
+                        <div className="bg-[#5865F2]/10 p-4 rounded-full mb-4 border border-[#5865F2]/30">
+                            {/* Logo de Discord */}
+                            <svg className="w-10 h-10 text-[#5865F2]" fill="currentColor" viewBox="0 0 127.14 96.36">
+                                <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77.7,77.7,0,0,0,6.89,11.1,105.25,105.25,0,0,0,32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.56,65.3c-5.36,0-9.8-4.83-9.8-10.74s4.33-10.74,9.8-10.74,9.84,4.83,9.8,10.74C52.4,60.47,48,65.3,42.56,65.3Zm42,0c-5.36,0-9.8-4.83-9.8-10.74s4.33-10.74,9.8-10.74,9.84,4.83,9.8,10.74C94.4,60.47,90,65.3,84.56,65.3Z"/>
+                            </svg>
+                        </div>
+                        <h3 className="text-xl font-black text-white mb-2">Contraseña del Directo</h3>
+                        <p className="text-gray-400 text-xs mb-6 leading-relaxed">
+                            El directo está protegido. Verifica que tienes el rol requerido en nuestro servidor de Discord para obtener la contraseña actual.
+                        </p>
+                        
+                        {/* Botón oficial de OAuth2 (Apuntando a tu Client ID con redirección a ?tab=directos) */}
+                        <a 
+                           href="https://discord.com/oauth2/authorize?client_id=1475601631977406605&response_type=code&redirect_uri=https%3A%2F%2Felpepestreamstv.netlify.app%2F%3Ftab%3Ddirectos&scope=identify"
+                           className={`bg-[#5865F2] hover:bg-[#4752C4] text-white font-bold py-3 px-6 rounded-md transition-all w-full shadow-lg hover:scale-105 flex items-center justify-center gap-2 text-sm ${isVerifying ? 'opacity-50 pointer-events-none' : ''}`}
+                        >
+                            {isVerifying ? 'Verificando...' : 'Verificar mi Rol en Discord'}
+                        </a>
+      
+                        <div className="mt-6 w-full bg-black/40 border border-white/5 rounded-lg p-4 transition-all">
+                            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Contraseña Actual</span>
+                            <div className={`mt-1 text-lg font-mono font-bold select-text text-center ${streamPassword.includes('•') || streamPassword.includes('Verificando') ? 'text-gray-600 blur-[2px] select-none' : 'text-[#e5a00d]'}`}>
+                                {streamPassword}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
           )}
 
-          <div className={searchQuery || selectedCategory ? 'pt-32 md:pt-36 px-4 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
-            
-            {searchQuery ? (
-               <div>
-                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
-                    <h2 className="text-xl md:text-3xl font-bold text-white">Resultados de búsqueda</h2>
-                    
-                    <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
-                      {renderFiltersAndSorting()}
-                      
-                      <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
-                        <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
-                        <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+          {/* --- VISTA: SERIES --- */}
+          {activeTab === 'series' && (
+            <div className="pt-32 px-4 md:px-12 flex flex-col items-center justify-center text-center h-[70vh] animate-in zoom-in-95 duration-500">
+                <div className="bg-neutral-900/50 p-6 rounded-full border border-white/5 mb-6 shadow-2xl">
+                    <Tv size={80} className="text-[#e5a00d]" />
+                </div>
+                <h2 className="text-4xl md:text-6xl font-black text-white mb-4 tracking-tighter">Próximamente...</h2>
+                <p className="text-gray-400 text-lg md:text-xl max-w-xl font-light">Estamos preparando todo el catálogo de series para integrarlo en la plataforma. ¡Vuelve muy pronto!</p>
+            </div>
+          )}
+
+          {/* --- VISTA: INICIO Y PELÍCULAS --- */}
+          {(activeTab === 'inicio' || activeTab === 'pelis') && (
+            <div className="animate-in fade-in duration-300">
+              {heroItem && !searchQuery && !selectedCategory && (
+                <div className="relative h-[60vh] sm:h-[70vh] md:h-[85vh] w-full mb-8 md:mb-12 overflow-hidden mt-32 lg:mt-0">
+                   <img src={heroItem.backdrop} className="w-full h-full object-cover" alt="Hero" />
+                   <div className="absolute inset-0 bg-gradient-to-r from-[#0f0f0f] via-[#0f0f0f]/80 md:via-[#0f0f0f]/60 to-transparent"></div>
+                   <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-transparent to-transparent"></div>
+                   <div className="absolute bottom-10 md:bottom-20 left-6 md:left-12 max-w-[90%] md:max-w-3xl z-10">
+                      <div className="flex items-center gap-2 text-[#e5a00d] font-bold text-[10px] md:text-xs uppercase tracking-[0.2em] mb-3 md:mb-4">
+                        <Film size={14} /> RECOMENDADO PARA TI
                       </div>
-                    </div>
-                 </div>
-                 {renderGridOrList(paginatedItems)}
-                 
-                 {/* Botón Paginación */}
-                 {processedDisplayItems.length > visibleCount && (
-                    <div className="flex justify-center mt-10">
-                       <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
-                          Cargar más resultados ({processedDisplayItems.length - visibleCount} restantes)
-                       </button>
-                    </div>
-                 )}
-               </div>
-            ) : selectedCategory ? (
-               <div className="animate-in fade-in duration-300">
-                 <button onClick={() => setSelectedCategory(null)} className="flex items-center gap-2 text-gray-400 hover:text-[#e5a00d] mb-4 md:mb-8 transition-colors text-sm font-semibold">
-                   <ChevronLeft size={20} /> VOLVER
-                 </button>
-                 
-                 <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6 md:mb-8">
-                   <h2 className="text-2xl md:text-4xl font-black text-white flex items-center gap-3 tracking-tight">
-                     {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
-                     {selectedCategory.title}
-                   </h2>
-                   
-                   <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
-                     {renderFiltersAndSorting()}
-
-                     <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
-                       <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
-                       <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
-                     </div>
+                      <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white mb-2 md:mb-4 leading-snug pb-2 drop-shadow-2xl line-clamp-2 md:line-clamp-3 break-words pr-4">{heroItem.title}</h1>
+                      <p className="text-gray-300 text-xs sm:text-sm md:text-base lg:text-lg line-clamp-2 md:line-clamp-3 font-light mb-4 md:mb-6 max-w-xl leading-relaxed">{heroItem.description}</p>
+                      <button onClick={() => setSelectedItem(heroItem)} className="flex items-center gap-2 md:gap-3 bg-[#e5a00d] hover:bg-[#c9890a] text-black font-extrabold py-2 md:py-3 px-6 md:px-8 rounded-full transition-all hover:scale-105 shadow-2xl shadow-[#e5a00d]/20 w-max text-xs md:text-base">
+                        <Info size={20} className="md:w-6 md:h-6" /> VER DETALLES
+                      </button>
                    </div>
-                 </div>
+                </div>
+              )}
 
-                 {renderGridOrList(paginatedItems)}
+              <div className={searchQuery || selectedCategory ? 'pt-40 md:pt-36 px-4 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
+                
+                {searchQuery ? (
+                   <div>
+                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
+                        <h2 className="text-xl md:text-3xl font-bold text-white">Resultados de búsqueda</h2>
+                        
+                        <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                          {renderFiltersAndSorting()}
+                          
+                          <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
+                            <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
+                            <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                          </div>
+                        </div>
+                     </div>
+                     {renderGridOrList(paginatedItems)}
+                     
+                     {/* Botón Paginación */}
+                     {processedDisplayItems.length > visibleCount && (
+                        <div className="flex justify-center mt-10">
+                           <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
+                              Cargar más resultados ({processedDisplayItems.length - visibleCount} restantes)
+                           </button>
+                        </div>
+                     )}
+                   </div>
+                ) : selectedCategory ? (
+                   <div className="animate-in fade-in duration-300">
+                     <button onClick={() => setSelectedCategory(null)} className="flex items-center gap-2 text-gray-400 hover:text-[#e5a00d] mb-4 md:mb-8 transition-colors text-sm font-semibold">
+                       <ChevronLeft size={20} /> VOLVER
+                     </button>
+                     
+                     <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6 md:mb-8">
+                       <h2 className="text-2xl md:text-4xl font-black text-white flex items-center gap-3 tracking-tight">
+                         {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
+                         {selectedCategory.title}
+                       </h2>
+                       
+                       <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                         {renderFiltersAndSorting()}
 
-                 {/* Botón Paginación */}
-                 {processedDisplayItems.length > visibleCount && (
-                    <div className="flex justify-center mt-10">
-                       <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
-                          Cargar más películas ({processedDisplayItems.length - visibleCount} restantes)
-                       </button>
-                    </div>
-                 )}
-               </div>
-            ) : (
-               categories.map((cat, idx) => (
-                   <MovieRow 
-                       key={idx} 
-                       title={cat.title} 
-                       items={cat.items} 
-                       onSelect={setSelectedItem} 
-                       onCategoryClick={setSelectedCategory}
-                       icon={cat.icon} 
-                       eager={true} 
-                   />
-               ))
-            )}
-          </div>
+                         <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
+                           <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
+                           <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
+                         </div>
+                       </div>
+                     </div>
+
+                     {renderGridOrList(paginatedItems)}
+
+                     {/* Botón Paginación */}
+                     {processedDisplayItems.length > visibleCount && (
+                        <div className="flex justify-center mt-10">
+                           <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
+                              Cargar más películas ({processedDisplayItems.length - visibleCount} restantes)
+                           </button>
+                        </div>
+                     )}
+                   </div>
+                ) : (
+                   categories.map((cat, idx) => (
+                       <MovieRow 
+                           key={idx} 
+                           title={cat.title} 
+                           items={cat.items} 
+                           onSelect={setSelectedItem} 
+                           onCategoryClick={setSelectedCategory}
+                           icon={cat.icon} 
+                           eager={true} 
+                       />
+                   ))
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
 
