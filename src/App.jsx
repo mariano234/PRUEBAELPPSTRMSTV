@@ -56,9 +56,10 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// --- COMPONENTE FILA DE PLEX ---
+// --- COMPONENTE FILA DE PLEX (Con Límite de 11 + Ver más) ---
 const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
   const rowRef = useRef(null);
+  
   const scroll = (direction) => {
     if (rowRef.current) {
       const { scrollLeft, clientWidth } = rowRef.current;
@@ -68,6 +69,10 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
   };
 
   if (!items || items.length === 0) return null;
+
+  // Lógica de limitación a 11 elementos
+  const displayItems = items.slice(0, 11);
+  const hasMore = items.length > 11;
 
   return (
     <div className="mb-8 md:mb-12 relative group/row">
@@ -89,7 +94,7 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
       </button>
 
       <div ref={rowRef} className="flex overflow-x-auto gap-4 md:gap-6 px-6 md:px-12 pb-6 scrollbar-hide snap-x scroll-pl-6 md:scroll-pl-12" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-        {items.map((item) => (
+        {displayItems.map((item) => (
           <div key={item.id} className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" onClick={() => onSelect(item)}>
             <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/5 bg-neutral-900 shadow-lg group-hover:scale-105 group-hover:border-[#e5a00d]/50 transition-all duration-300">
               <img src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-40" loading="lazy" />
@@ -116,6 +121,21 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
             {item.isSaga && <div className="text-[10px] md:text-xs text-[#e5a00d] font-medium tracking-wide">COLECCIÓN</div>}
           </div>
         ))}
+
+        {/* --- TARJETA "VER MÁS" --- */}
+        {hasMore && (
+          <div 
+            className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" 
+            onClick={() => onCategoryClick({title, items, icon})}
+          >
+            <div className="relative aspect-[2/3] w-full rounded-lg border border-white/10 bg-neutral-900/40 hover:bg-neutral-800 transition-all duration-300 flex flex-col items-center justify-center gap-3 text-gray-400 hover:text-[#e5a00d] shadow-lg">
+               <div className="p-3 md:p-4 rounded-full bg-black/40 group-hover:scale-110 transition-transform">
+                 <ChevronRight size={32} />
+               </div>
+               <span className="font-bold text-xs md:text-sm">Ver todos ({items.length})</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -224,36 +244,43 @@ export default function App() {
       const idxLang = getIdx(['idioma', 'lenguaje']);
       const idxQual = getIdx(['calidad']);
       const idxGen  = getIdx(['genero', 'género']);
-      
       const idxLink = 8; 
 
       const rawRows = parsedData.slice(1).filter(r => r[idxTitle]);
 
-      const enriched = await Promise.all(rawRows.map(async (row, i) => {
-        const title = row[idxTitle];
-        const year = idxYear !== -1 ? row[idxYear] : '';
-        const tmdb = await fetchTMDB(title, year);
-        
-        let finalLink = row.length > idxLink ? row[idxLink].trim() : '#';
-        if (!finalLink || finalLink.toLowerCase() === 'link') finalLink = '#';
-        else if (finalLink !== '#' && !finalLink.startsWith('http')) finalLink = 'https://' + finalLink;
+      // Lógica de carga en lotes (Chunking) para no ahogar al navegador
+      const chunkSize = 15;
+      const enriched = [];
+      
+      for (let i = 0; i < rawRows.length; i += chunkSize) {
+        const chunk = rawRows.slice(i, i + chunkSize);
+        const chunkEnriched = await Promise.all(chunk.map(async (row, idx) => {
+          const title = row[idxTitle];
+          const year = idxYear !== -1 ? row[idxYear] : '';
+          const tmdb = await fetchTMDB(title, year);
+          
+          let finalLink = row.length > idxLink ? row[idxLink].trim() : '#';
+          if (!finalLink || finalLink.toLowerCase() === 'link') finalLink = '#';
+          else if (finalLink !== '#' && !finalLink.startsWith('http')) finalLink = 'https://' + finalLink;
 
-        return {
-          id: `item-${i}`,
-          isSaga: false,
-          title,
-          year: tmdb?.year || year || '?',
-          description: tmdb?.overview || "Sin descripción disponible.",
-          image: tmdb?.poster || `https://via.placeholder.com/500x750/1a1a1c/e5a00d?text=${encodeURIComponent(title)}`,
-          backdrop: tmdb?.backdrop || tmdb?.poster,
-          videoQuality: formatVideoQuality(idxQual !== -1 ? row[idxQual] : ''),
-          language: idxLang !== -1 ? translateLangs(row[idxLang]) : 'N/A',
-          link: finalLink,
-          genres: tmdb?.genres?.length ? tmdb.genres : (idxGen !== -1 && row[idxGen] ? [row[idxGen]] : ["Otros"]),
-          collection: tmdb?.collection || null,
-          rating: tmdb?.rating || 'N/A'
-        };
-      }));
+          return {
+            id: `item-${i + idx}`,
+            isSaga: false,
+            title,
+            year: tmdb?.year || year || '?',
+            description: tmdb?.overview || "Sin descripción disponible.",
+            image: tmdb?.poster || `https://via.placeholder.com/500x750/1a1a1c/e5a00d?text=${encodeURIComponent(title)}`,
+            backdrop: tmdb?.backdrop || tmdb?.poster,
+            videoQuality: formatVideoQuality(idxQual !== -1 ? row[idxQual] : ''),
+            language: idxLang !== -1 ? translateLangs(row[idxLang]) : 'N/A',
+            link: finalLink,
+            genres: tmdb?.genres?.length ? tmdb.genres : (idxGen !== -1 && row[idxGen] ? [row[idxGen]] : ["Otros"]),
+            collection: tmdb?.collection || null,
+            rating: tmdb?.rating || 'N/A'
+          };
+        }));
+        enriched.push(...chunkEnriched);
+      }
 
       const sagaMap = new Map();
       enriched.forEach(item => {
@@ -320,9 +347,9 @@ export default function App() {
     
     let cats = [];
 
-    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 15), icon: <Star size={22}/> });
+    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items), icon: <Star size={22}/> });
 
-    const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 15);
+    const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0));
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
 
     if (sagas.length > 0) {
@@ -355,27 +382,19 @@ export default function App() {
     <div className="min-h-screen bg-[#0f0f0f] text-gray-200 font-sans selection:bg-[#e5a00d] selection:text-black pb-20 overflow-x-hidden">
       
       <style>{`
-        ::-webkit-scrollbar {
-          width: 10px;
-          height: 10px;
-        }
-        ::-webkit-scrollbar-track {
-          background: #0f0f0f;
-        }
-        ::-webkit-scrollbar-thumb {
-          background: #333;
-          border-radius: 5px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-          background: #e5a00d;
-        }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #0f0f0f; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb:hover { background: #e5a00d; }
       `}</style>
 
+      {/* --- NAVBAR RESPONSIVO --- */}
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
-        <div className="px-6 md:px-12 py-4 md:py-5 flex items-center justify-between">
-          <div className="flex items-center gap-10">
+        <div className="px-4 md:px-12 py-3 md:py-5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 md:gap-10">
+          
+          <div className="flex items-center gap-6 md:gap-10">
             <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer" onClick={() => {setSearchQuery(""); setSelectedCategory(null);}}>
-              <ChevronRight size={32} className="-mr-2 md:-mr-3" />
+              <ChevronRight size={28} className="-mr-2 md:-mr-3" />
               <span>ElPepe<span className="text-white font-light">Streams</span></span>
             </div>
             <button onClick={() => {setSearchQuery(""); setSelectedCategory(null);}} className="hidden md:flex items-center gap-2 text-white hover:text-[#e5a00d] transition-colors font-bold tracking-wide">
@@ -383,16 +402,17 @@ export default function App() {
             </button>
           </div>
 
-          <div className="relative group w-48 sm:w-64 md:w-80">
+          <div className="relative group w-full sm:w-auto flex-1 sm:flex-none max-w-md order-last sm:order-none">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#e5a00d] transition-colors" size={16} />
             <input 
               type="text" 
               placeholder="Buscar películas..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-neutral-900/60 border border-white/10 rounded-full py-2 pl-10 md:pl-12 pr-4 md:pr-6 w-full focus:outline-none focus:border-[#e5a00d] focus:bg-black transition-all text-xs md:text-sm backdrop-blur-sm"
+              className="bg-neutral-900/60 border border-white/10 rounded-full py-2.5 pl-10 md:pl-12 pr-4 md:pr-6 w-full focus:outline-none focus:border-[#e5a00d] focus:bg-black transition-all text-xs md:text-sm backdrop-blur-sm"
             />
           </div>
+
         </div>
       </nav>
 
@@ -418,7 +438,6 @@ export default function App() {
                   <div className="flex items-center gap-2 text-[#e5a00d] font-bold text-[10px] md:text-xs uppercase tracking-[0.2em] mb-3 md:mb-4">
                     <Film size={14} /> RECOMENDADO PARA TI
                   </div>
-                  {/* Se sustituye leading-tight por leading-snug y pb-2 para evitar cortes inferiores */}
                   <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white mb-2 md:mb-4 leading-snug pb-2 drop-shadow-2xl line-clamp-2 md:line-clamp-3 break-words pr-4">{heroItem.title}</h1>
                   <p className="text-gray-300 text-xs sm:text-sm md:text-base lg:text-lg line-clamp-2 md:line-clamp-3 font-light mb-4 md:mb-6 max-w-xl leading-relaxed">{heroItem.description}</p>
                   <button onClick={() => setSelectedItem(heroItem)} className="flex items-center gap-2 md:gap-3 bg-[#e5a00d] hover:bg-[#c9890a] text-black font-extrabold py-2 md:py-3 px-6 md:px-8 rounded-full transition-all hover:scale-105 shadow-2xl shadow-[#e5a00d]/20 w-max text-xs md:text-base">
@@ -428,7 +447,7 @@ export default function App() {
             </div>
           )}
 
-          <div className={searchQuery || selectedCategory ? 'pt-28 md:pt-32 px-6 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
+          <div className={searchQuery || selectedCategory ? 'pt-32 md:pt-36 px-6 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
             
             {searchQuery ? (
                <div>
@@ -500,7 +519,6 @@ export default function App() {
                 {selectedItem.isSaga ? (
                     <div className="flex flex-col flex-1">
                         <div className="text-[#e5a00d] font-bold text-xs md:text-sm mb-2 flex items-center gap-1 uppercase tracking-widest"><Layers size={14}/> Colección Oficial</div>
-                        {/* Se sustituye leading-tight por leading-snug y pb-2 en el modal */}
                         <h2 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-6 leading-snug pb-2">{selectedItem.title}</h2>
                         
                         <p className="text-gray-400 text-sm md:text-base lg:text-lg font-light leading-relaxed mb-8">Esta es una colección que agrupa varias películas de tu biblioteca. Selecciona la película que deseas ver o descargar.</p>
@@ -508,13 +526,13 @@ export default function App() {
                         <div className="mt-4 flex flex-col gap-8 shrink-0 pb-4">
                            <div className="w-full">
                               <h4 className="text-white font-bold text-sm md:text-base mb-4 border-b border-white/10 pb-2">Películas en tu biblioteca ({selectedItem.movies.length})</h4>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-4">
                                  {selectedItem.movies.map(movie => (
                                     <div key={movie.id} className="cursor-pointer group flex flex-col" onClick={() => setSelectedItem(movie)}>
                                        <div className="aspect-[2/3] rounded-md overflow-hidden relative shadow-lg">
                                            <img src={movie.image} alt={movie.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                                        </div>
-                                       <p className="text-xs font-semibold text-gray-200 mt-2 truncate group-hover:text-[#e5a00d]">{movie.title}</p>
+                                       <p className="text-xs font-semibold text-gray-200 mt-2 line-clamp-2 leading-normal pb-1 group-hover:text-[#e5a00d]">{movie.title}</p>
                                        <p className="text-[10px] text-gray-500">{movie.year}</p>
                                     </div>
                                  ))}
@@ -536,7 +554,6 @@ export default function App() {
                             </div>
                         )}
 
-                        {/* Se sustituye leading-tight por leading-snug y pb-2 en el modal */}
                         <h2 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-6 leading-snug pb-2">{selectedItem.title}</h2>
                         
                         <div className="flex flex-wrap items-center gap-3 md:gap-4 mb-6">
