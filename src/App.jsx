@@ -56,12 +56,15 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// --- COMPONENTE IMAGEN LAZY (Ahorro Masivo de Memoria RAM - VERSIÓN ESTRICTA) ---
-const LazyImage = ({ src, alt, className }) => {
-  const [isVisible, setIsVisible] = useState(false);
+// --- COMPONENTE IMAGEN LAZY ---
+const LazyImage = ({ src, alt, className, eager = false }) => {
+  // Si eager es true, la imagen es visible desde el minuto 0 (sin esperas)
+  const [isVisible, setIsVisible] = useState(eager);
   const imgRef = useRef(null);
 
   useEffect(() => {
+    if (eager) return; // Si es carga rápida, ignoramos el observer
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -69,12 +72,12 @@ const LazyImage = ({ src, alt, className }) => {
           observer.disconnect();
         }
       },
-      // Margen de 150px: la imagen no existe hasta que esté a punto de salir en pantalla
-      { rootMargin: "150px" } 
+      // Margen ampliado a 300px para que cargue justo antes de que lo veas
+      { rootMargin: "300px" } 
     );
     if (imgRef.current) observer.observe(imgRef.current);
-    return () => observer.disconnect();
-  }, []);
+    return () => { if (observer) observer.disconnect(); };
+  }, [eager]);
 
   return (
     <div ref={imgRef} className={`w-full h-full bg-neutral-900 ${!isVisible ? 'animate-pulse' : ''}`}>
@@ -82,9 +85,9 @@ const LazyImage = ({ src, alt, className }) => {
         <img
           src={src}
           alt={alt}
-          className={`${className} transition-opacity duration-500 opacity-0`}
-          onLoad={(e) => e.target.classList.remove('opacity-0')}
-          loading="lazy"
+          className={`${className} ${eager ? '' : 'transition-opacity duration-500 opacity-0'}`}
+          onLoad={(e) => { if (!eager) e.target.classList.remove('opacity-0'); }}
+          loading={eager ? "eager" : "lazy"}
         />
       )}
     </div>
@@ -92,14 +95,14 @@ const LazyImage = ({ src, alt, className }) => {
 };
 
 // --- COMPONENTE FILA DE PLEX ---
-const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon, isModal = false }) => {
+const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon, isModal = false, eager = false }) => {
   const rowRef = useRef(null);
   const containerRef = useRef(null);
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(eager); // Si es main page, lo cargamos del tirón
   const [showArrows, setShowArrows] = useState(false);
   
-  // Lazy Loading para toda la fila
   useEffect(() => {
+    if (eager) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -110,10 +113,9 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
       { rootMargin: "300px" }
     );
     if (containerRef.current) observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
+    return () => { if (observer) observer.disconnect(); };
+  }, [eager]);
 
-  // Lógica inteligente para ocultar flechas si no hay suficientes películas
   useEffect(() => {
     const checkArrows = () => {
       if (rowRef.current) {
@@ -124,7 +126,7 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
     if (isVisible) {
       checkArrows();
       window.addEventListener('resize', checkArrows);
-      const timer = setTimeout(checkArrows, 100); // Pequeño delay para asegurar renderizado
+      const timer = setTimeout(checkArrows, 100); 
       return () => {
         window.removeEventListener('resize', checkArrows);
         clearTimeout(timer);
@@ -142,9 +144,10 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
 
   if (!items || items.length === 0) return null;
 
-  const MAX_ITEMS = isModal ? 15 : 11;
-  const displayItems = items.slice(0, MAX_ITEMS);
-  const hasMore = items.length > MAX_ITEMS && !isModal;
+  // Límite ampliado a 20 películas por fila
+  const limit = isModal ? 15 : 20;
+  const displayItems = items.slice(0, limit);
+  const hasMore = items.length > limit && !isModal;
 
   const cardWidthClasses = isModal 
     ? "w-24 sm:w-28 md:w-32 lg:w-36 xl:w-40" 
@@ -182,7 +185,7 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
             {displayItems.map((item) => (
               <div key={item.id} className={`snap-start shrink-0 ${cardWidthClasses} relative cursor-pointer group transition-all duration-300 flex flex-col`} onClick={() => onSelect(item)}>
                 <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/5 bg-neutral-900 shadow-lg group-hover:scale-105 group-hover:border-[#e5a00d]/50 transition-all duration-300">
-                  <LazyImage src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover group-hover:opacity-40" />
+                  <LazyImage src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover group-hover:opacity-40" eager={eager} />
                   
                   <div className="absolute inset-0 p-2 md:p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-t from-black via-transparent to-transparent">
                      <div className="flex flex-col gap-1 md:gap-2 translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
@@ -247,7 +250,6 @@ export default function App() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [viewMode, setViewMode] = useState('grid'); 
 
-  // --- FAVICON PERSONALIZADO (Añadido) ---
   useEffect(() => {
     document.title = "ElPepeStreams";
     let link = document.querySelector("link[rel~='icon']");
@@ -256,7 +258,6 @@ export default function App() {
       link.rel = 'icon';
       document.head.appendChild(link);
     }
-    // Icono dinámico de unas palomitas
     link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>";
   }, []);
 
@@ -453,9 +454,10 @@ export default function App() {
     
     let cats = [];
 
-    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items), icon: <Star size={22}/> });
+    // Recomendados y Mejor Valoradas limitados a 20 para evitar el botón "Ver más"
+    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 20), icon: <Star size={22}/> });
 
-    const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0));
+    const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 20);
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
 
     if (sagas.length > 0) {
@@ -487,7 +489,8 @@ export default function App() {
   const renderGridOrList = (arrayToRender) => {
     if (viewMode === 'list') {
       return (
-        <div className="flex flex-col gap-3 md:gap-4 w-full max-w-5xl">
+        // Max-w-5xl eliminado. Ahora fluye al 100% como la cuadrícula.
+        <div className="flex flex-col gap-3 md:gap-4 w-full">
           {arrayToRender.map(item => (
             <div key={item.id} className="group cursor-pointer flex gap-4 md:gap-6 bg-neutral-900/30 hover:bg-neutral-800/60 border border-white/5 rounded-xl p-3 md:p-4 transition-all" onClick={() => setSelectedItem(item)}>
                <div className="w-20 md:w-28 shrink-0 aspect-[2/3] rounded-lg overflow-hidden shadow-lg group-hover:scale-105 transition-transform">
@@ -638,6 +641,8 @@ export default function App() {
                        onSelect={setSelectedItem} 
                        onCategoryClick={setSelectedCategory}
                        icon={cat.icon} 
+                       // Eager load SÓLO para la pantalla principal para no dar sensación de lentitud
+                       eager={true} 
                    />
                ))
             )}
@@ -741,7 +746,6 @@ export default function App() {
                         )}
 
                         <div className="mt-12 flex flex-col gap-2 shrink-0 pb-4">
-                           {/* Mismo formato de la portada para sagas y similares. onClick enlaza a la colección */}
                            {sagaItems.length > 0 && (
                               <MovieRow 
                                   title="Más de esta saga" 
