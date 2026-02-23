@@ -56,7 +56,7 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// --- COMPONENTE IMAGEN LAZY (Ahorro Masivo de Memoria RAM) ---
+// --- COMPONENTE IMAGEN LAZY (Ahorro Masivo de Memoria RAM - VERSIÓN ESTRICTA) ---
 const LazyImage = ({ src, alt, className }) => {
   const [isVisible, setIsVisible] = useState(false);
   const imgRef = useRef(null);
@@ -69,20 +69,25 @@ const LazyImage = ({ src, alt, className }) => {
           observer.disconnect();
         }
       },
-      { rootMargin: "300px" } // Carga la imagen un poco antes de que aparezca
+      // Margen de 150px: la imagen no existe hasta que esté a punto de salir en pantalla
+      { rootMargin: "150px" } 
     );
     if (imgRef.current) observer.observe(imgRef.current);
     return () => observer.disconnect();
   }, []);
 
   return (
-    <img
-      ref={imgRef}
-      // Solo dibuja la URL real si está cerca de la pantalla. Si no, usa un pixel transparente en base64 para ocupar 0 RAM
-      src={isVisible ? src : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2 3'%3E%3C/svg%3E"}
-      alt={alt}
-      className={`${className} ${isVisible ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500`}
-    />
+    <div ref={imgRef} className={`w-full h-full bg-neutral-900 ${!isVisible ? 'animate-pulse' : ''}`}>
+      {isVisible && (
+        <img
+          src={src}
+          alt={alt}
+          className={`${className} transition-opacity duration-500 opacity-0`}
+          onLoad={(e) => e.target.classList.remove('opacity-0')}
+          loading="lazy"
+        />
+      )}
+    </div>
   );
 };
 
@@ -91,7 +96,9 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
   const rowRef = useRef(null);
   const containerRef = useRef(null);
   const [isVisible, setIsVisible] = useState(false);
+  const [showArrows, setShowArrows] = useState(false);
   
+  // Lazy Loading para toda la fila
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -105,6 +112,25 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
     if (containerRef.current) observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  // Lógica inteligente para ocultar flechas si no hay suficientes películas
+  useEffect(() => {
+    const checkArrows = () => {
+      if (rowRef.current) {
+        setShowArrows(rowRef.current.scrollWidth > rowRef.current.clientWidth + 10);
+      }
+    };
+
+    if (isVisible) {
+      checkArrows();
+      window.addEventListener('resize', checkArrows);
+      const timer = setTimeout(checkArrows, 100); // Pequeño delay para asegurar renderizado
+      return () => {
+        window.removeEventListener('resize', checkArrows);
+        clearTimeout(timer);
+      };
+    }
+  }, [isVisible, items]);
 
   const scroll = (direction) => {
     if (rowRef.current) {
@@ -120,7 +146,6 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
   const displayItems = items.slice(0, MAX_ITEMS);
   const hasMore = items.length > MAX_ITEMS && !isModal;
 
-  // Escala más pequeña para dentro de los modales
   const cardWidthClasses = isModal 
     ? "w-24 sm:w-28 md:w-32 lg:w-36 xl:w-40" 
     : "w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56";
@@ -132,7 +157,6 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
           if (onTitleClick) onTitleClick();
           else if (!isModal) onCategoryClick({title, items, icon});
         }}
-        // Reducimos el margin bottom (mb-0 o mb-1) para compensar el padding-top que añadiremos al carrusel
         className={`${isModal ? 'text-base md:text-xl px-2' : 'text-lg md:text-2xl px-4 md:px-12'} font-bold text-gray-100 mb-0 md:mb-1 flex items-center gap-2 ${(!isModal || onTitleClick) ? 'hover:text-[#e5a00d] cursor-pointer' : ''} transition-colors w-max`}
       >
         {icon && <span className="text-[#e5a00d] mr-1">{icon}</span>}
@@ -142,15 +166,18 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
       
       {isVisible ? (
         <>
-          <button onClick={() => scroll('left')} className="absolute left-0 top-[50%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-2 md:p-4 rounded-r-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-r border-y border-white/10">
-            <ChevronLeft size={28} />
-          </button>
+          {showArrows && (
+            <button onClick={() => scroll('left')} className="absolute left-0 top-[50%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-2 md:p-4 rounded-r-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-r border-y border-white/10">
+              <ChevronLeft size={28} />
+            </button>
+          )}
           
-          <button onClick={() => scroll('right')} className="absolute right-0 top-[50%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-2 md:p-4 rounded-l-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-l border-y border-white/10">
-            <ChevronRight size={28} />
-          </button>
+          {showArrows && (
+            <button onClick={() => scroll('right')} className="absolute right-0 top-[50%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-2 md:p-4 rounded-l-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-l border-y border-white/10">
+              <ChevronRight size={28} />
+            </button>
+          )}
 
-          {/* Se ha añadido pt-4 md:pt-6 para que al hacer el scale de hover NO se corte la imagen por arriba */}
           <div ref={rowRef} className={`flex overflow-x-auto gap-3 md:gap-6 pt-3 md:pt-6 ${isModal ? 'px-2 pb-2 scroll-pl-2' : 'px-4 md:px-12 pb-4 md:pb-6 scroll-pl-4 md:scroll-pl-12'} scrollbar-hide snap-x`} style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             {displayItems.map((item) => (
               <div key={item.id} className={`snap-start shrink-0 ${cardWidthClasses} relative cursor-pointer group transition-all duration-300 flex flex-col`} onClick={() => onSelect(item)}>
@@ -196,7 +223,6 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
           </div>
         </>
       ) : (
-        /* Skeleton pre-carga optimizado */
         <div className={`flex gap-3 md:gap-6 pt-3 md:pt-6 ${isModal ? 'px-2' : 'px-4 md:px-12'} overflow-hidden`}>
            {[...Array(6)].map((_, i) => (
              <div key={i} className={`shrink-0 ${cardWidthClasses} aspect-[2/3] bg-neutral-900/40 rounded-lg animate-pulse`}></div>
@@ -219,7 +245,20 @@ export default function App() {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [isScrolled, setIsScrolled] = useState(false);
-  const [viewMode, setViewMode] = useState('grid'); // Novedad: Toggle Grid/List
+  const [viewMode, setViewMode] = useState('grid'); 
+
+  // --- FAVICON PERSONALIZADO (Añadido) ---
+  useEffect(() => {
+    document.title = "ElPepeStreams";
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    // Icono dinámico de unas palomitas
+    link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>";
+  }, []);
 
   const translateLangs = (str) => {
     if (!str || str === 'N/A') return 'N/A';
@@ -474,7 +513,6 @@ export default function App() {
       );
     }
 
-    // Grid mode
     return (
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3 md:gap-6">
         {arrayToRender.map(item => (
