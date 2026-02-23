@@ -56,10 +56,27 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// --- COMPONENTE FILA DE PLEX (Con Límite de 11 + "Ver Más") ---
-const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
+// --- COMPONENTE FILA DE PLEX (Optimizado con Intersection Observer) ---
+const MovieRow = ({ title, items, onSelect, onCategoryClick, icon, isModal = false }) => {
   const rowRef = useRef(null);
+  const containerRef = useRef(null);
+  const [isVisible, setIsVisible] = useState(false);
   
+  // Lazy Loading del DOM: Solo renderiza las imágenes si la fila está cerca de la pantalla
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "300px" } // Carga 300px antes de que aparezca en pantalla
+    );
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   const scroll = (direction) => {
     if (rowRef.current) {
       const { scrollLeft, clientWidth } = rowRef.current;
@@ -70,74 +87,83 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, icon }) => {
 
   if (!items || items.length === 0) return null;
 
-  // Lógica de Límite Estricto para ahorrar memoria
-  const MAX_ITEMS = 11;
+  const MAX_ITEMS = isModal ? 15 : 11;
   const displayItems = items.slice(0, MAX_ITEMS);
-  const hasMore = items.length > MAX_ITEMS;
+  const hasMore = items.length > MAX_ITEMS && !isModal;
 
   return (
-    <div className="mb-6 md:mb-12 relative group/row">
+    <div ref={containerRef} className={`${isModal ? 'mb-4' : 'mb-6 md:mb-10'} relative group/row min-h-[180px]`}>
       <h3 
-        onClick={() => onCategoryClick({title, items, icon})}
-        className="text-lg md:text-2xl font-bold text-gray-100 mb-2 md:mb-5 px-4 md:px-12 flex items-center gap-2 hover:text-[#e5a00d] cursor-pointer transition-colors w-max"
+        onClick={() => !isModal && onCategoryClick({title, items, icon})}
+        className={`${isModal ? 'text-base md:text-xl px-2' : 'text-lg md:text-2xl px-4 md:px-12'} font-bold text-gray-100 mb-2 md:mb-4 flex items-center gap-2 ${!isModal ? 'hover:text-[#e5a00d] cursor-pointer' : ''} transition-colors w-max`}
       >
         {icon && <span className="text-[#e5a00d] mr-1">{icon}</span>}
         {title} 
-        <ChevronRight size={24} className="text-[#e5a00d] opacity-0 group-hover/row:opacity-100 transition-opacity" />
+        {!isModal && <ChevronRight size={24} className="text-[#e5a00d] opacity-0 group-hover/row:opacity-100 transition-opacity" />}
       </h3>
       
-      <button onClick={() => scroll('left')} className="absolute left-0 top-[45%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-3 md:p-4 rounded-r-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-r border-y border-white/10">
-        <ChevronLeft size={28} />
-      </button>
-      
-      <button onClick={() => scroll('right')} className="absolute right-0 top-[45%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-3 md:p-4 rounded-l-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-l border-y border-white/10">
-        <ChevronRight size={28} />
-      </button>
+      {isVisible ? (
+        <>
+          <button onClick={() => scroll('left')} className="absolute left-0 top-[50%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-2 md:p-4 rounded-r-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-r border-y border-white/10">
+            <ChevronLeft size={28} />
+          </button>
+          
+          <button onClick={() => scroll('right')} className="absolute right-0 top-[50%] -translate-y-1/2 z-20 bg-black/80 hover:bg-[#e5a00d] text-white p-2 md:p-4 rounded-l-xl opacity-0 group-hover/row:opacity-100 transition-all hidden md:block backdrop-blur-md border-l border-y border-white/10">
+            <ChevronRight size={28} />
+          </button>
 
-      <div ref={rowRef} className="flex overflow-x-auto gap-3 md:gap-6 px-4 md:px-12 pb-4 md:pb-6 scrollbar-hide snap-x scroll-pl-4 md:scroll-pl-12" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-        {displayItems.map((item) => (
-          <div key={item.id} className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" onClick={() => onSelect(item)}>
-            <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/5 bg-neutral-900 shadow-lg group-hover:scale-105 group-hover:border-[#e5a00d]/50 transition-all duration-300">
-              <img src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-40" loading="lazy" />
-              
-              <div className="absolute inset-0 p-2 md:p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-t from-black via-transparent to-transparent">
-                 <div className="flex flex-col gap-1 md:gap-2 translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
-                    <div className="flex items-center gap-1 flex-wrap">
-                        {!item.isSaga && (
-                          <span className={`backdrop-blur-md text-[9px] md:text-xs font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border ${item.videoQuality === '4K' ? 'bg-[#e5a00d]/90 text-black border-[#e5a00d]' : 'bg-white/20 text-white border-white/20'}`}>
-                              <Monitor size={10} /> {item.videoQuality}
-                          </span>
-                        )}
-                        {!item.isSaga && item.rating && item.rating !== 'N/A' && item.rating !== '0.0' && (
-                          <span className="backdrop-blur-md text-[9px] md:text-xs font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border bg-black/60 text-[#e5a00d] border-[#e5a00d]/50">
-                              <Star size={10} fill="currentColor" /> {item.rating}
-                          </span>
-                        )}
-                    </div>
-                 </div>
+          <div ref={rowRef} className={`flex overflow-x-auto gap-3 md:gap-6 ${isModal ? 'px-2 pb-2 scroll-pl-2' : 'px-4 md:px-12 pb-4 md:pb-6 scroll-pl-4 md:scroll-pl-12'} scrollbar-hide snap-x`} style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            {displayItems.map((item) => (
+              <div key={item.id} className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" onClick={() => onSelect(item)}>
+                <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/5 bg-neutral-900 shadow-lg group-hover:scale-105 group-hover:border-[#e5a00d]/50 transition-all duration-300">
+                  <img src={item.image} alt={item.displayTitle || item.title} className="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-40" loading="lazy" />
+                  
+                  <div className="absolute inset-0 p-2 md:p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-t from-black via-transparent to-transparent">
+                     <div className="flex flex-col gap-1 md:gap-2 translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                        <div className="flex items-center gap-1 flex-wrap">
+                            {!item.isSaga && (
+                              <span className={`backdrop-blur-md text-[9px] md:text-xs font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border ${item.videoQuality === '4K' ? 'bg-[#e5a00d]/90 text-black border-[#e5a00d]' : 'bg-white/20 text-white border-white/20'}`}>
+                                  <Monitor size={10} /> {item.videoQuality}
+                              </span>
+                            )}
+                            {!item.isSaga && item.rating && item.rating !== 'N/A' && item.rating !== '0.0' && (
+                              <span className="backdrop-blur-md text-[9px] md:text-xs font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border bg-black/60 text-[#e5a00d] border-[#e5a00d]/50">
+                                  <Star size={10} fill="currentColor" /> {item.rating}
+                              </span>
+                            )}
+                        </div>
+                     </div>
+                  </div>
+                </div>
+                <h3 className={`mt-2 md:mt-3 ${isModal ? 'text-[11px] md:text-xs' : 'text-xs md:text-sm'} font-semibold text-gray-200 line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors`}>{item.displayTitle || item.title}</h3>
+                {!item.isSaga && <div className="text-[10px] md:text-xs text-gray-500 font-medium">{item.year}</div>}
+                {item.isSaga && <div className="text-[10px] md:text-xs text-[#e5a00d] font-medium tracking-wide">COLECCIÓN</div>}
               </div>
-            </div>
-            <h3 className="mt-2 md:mt-3 text-xs md:text-sm font-semibold text-gray-200 line-clamp-2 leading-normal pb-1 pr-1 group-hover:text-[#e5a00d] transition-colors">{item.displayTitle || item.title}</h3>
-            {!item.isSaga && <div className="text-[10px] md:text-xs text-gray-500 font-medium">{item.year}</div>}
-            {item.isSaga && <div className="text-[10px] md:text-xs text-[#e5a00d] font-medium tracking-wide">COLECCIÓN</div>}
-          </div>
-        ))}
+            ))}
 
-        {/* --- TARJETA BOTÓN "VER MÁS" --- */}
-        {hasMore && (
-          <div 
-            className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" 
-            onClick={() => onCategoryClick({title, items, icon})}
-          >
-            <div className="relative aspect-[2/3] w-full rounded-lg border border-white/10 bg-neutral-900/40 hover:bg-neutral-800 transition-all duration-300 flex flex-col items-center justify-center gap-2 md:gap-3 text-gray-400 hover:text-[#e5a00d] shadow-lg">
-               <div className="p-3 md:p-4 rounded-full bg-black/40 group-hover:scale-110 transition-transform">
-                 <Grid size={28} className="md:w-8 md:h-8" />
-               </div>
-               <span className="font-bold text-xs md:text-sm text-center px-2">Ver todos ({items.length})</span>
-            </div>
+            {hasMore && (
+              <div 
+                className="snap-start shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 relative cursor-pointer group transition-all duration-300 flex flex-col" 
+                onClick={() => onCategoryClick({title, items, icon})}
+              >
+                <div className="relative aspect-[2/3] w-full rounded-lg border border-white/10 bg-neutral-900/40 hover:bg-neutral-800 transition-all duration-300 flex flex-col items-center justify-center gap-2 md:gap-3 text-gray-400 hover:text-[#e5a00d] shadow-lg">
+                   <div className="p-3 md:p-4 rounded-full bg-black/40 group-hover:scale-110 transition-transform">
+                     <Grid size={28} className="md:w-8 md:h-8" />
+                   </div>
+                   <span className="font-bold text-xs md:text-sm text-center px-2">Ver todos ({items.length})</span>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        /* Skeleton pre-carga: Mantiene la estructura de la web para ahorrar memoria y evitar saltos */
+        <div className={`flex gap-3 md:gap-6 ${isModal ? 'px-2' : 'px-4 md:px-12'} overflow-hidden`}>
+           {[...Array(6)].map((_, i) => (
+             <div key={i} className="shrink-0 w-28 sm:w-36 md:w-40 lg:w-48 xl:w-52 2xl:w-56 aspect-[2/3] bg-neutral-900/40 rounded-lg animate-pulse"></div>
+           ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -348,7 +374,8 @@ export default function App() {
     
     let cats = [];
 
-    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items), icon: <Star size={22}/> });
+    // Limite aplicado para que solo haya 15 recomendados
+    cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 15), icon: <Star size={22}/> });
 
     const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0));
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
@@ -389,9 +416,9 @@ export default function App() {
         ::-webkit-scrollbar-thumb:hover { background: #e5a00d; }
       `}</style>
 
-      {/* --- NAVBAR RESPONSIVO (Arreglado Solapamiento Móvil) --- */}
+      {/* --- NAVBAR RESPONSIVO (Arreglado Solapamiento y Horizontal) --- */}
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
-        <div className="px-4 md:px-12 py-3 md:py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 md:gap-10">
+        <div className="px-4 md:px-12 py-3 md:py-5 flex flex-col sm:flex-row items-center justify-between gap-3 md:gap-10">
           
           <div className="flex w-full sm:w-auto items-center justify-between gap-6 md:gap-10">
             <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer" onClick={() => {setSearchQuery(""); setSelectedCategory(null);}}>
@@ -504,15 +531,16 @@ export default function App() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 md:p-8 bg-black/95 backdrop-blur-xl animate-in fade-in duration-300">
           <div className="absolute inset-0" onClick={() => setSelectedItem(null)}></div>
           
-          <div className="bg-[#1a1a1c] w-full h-full md:h-auto md:max-w-6xl md:rounded-2xl overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] relative flex flex-col md:flex-row max-h-[100vh] md:max-h-[95vh] border-0 md:border border-white/10 animate-in zoom-in-95 duration-300">
+          <div className="bg-[#1a1a1c] w-full h-full md:h-auto md:max-w-6xl md:rounded-2xl overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] relative flex flex-col sm:flex-row max-h-[100vh] sm:max-h-[95vh] border-0 md:border border-white/10 animate-in zoom-in-95 duration-300">
             
             <button onClick={() => setSelectedItem(null)} className="absolute top-4 right-4 md:top-6 md:right-6 z-50 p-2 bg-black/50 hover:bg-[#e5a00d] text-white hover:text-black rounded-full transition-all">
               <X size={24} />
             </button>
 
-            <div className="w-full md:w-[300px] lg:w-[400px] relative shrink-0 h-[35vh] md:h-auto">
-                <img src={selectedItem.image} className="w-full h-full object-cover" alt="Poster" loading="lazy" />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#1a1a1c] via-[#1a1a1c]/20 to-transparent md:bg-gradient-to-r md:from-transparent md:via-[#1a1a1c]/40 md:to-[#1a1a1c]"></div>
+            {/* Arreglo de poster móvil (Vertical y Horizontal) con object-contain */}
+            <div className="w-full sm:w-[250px] md:w-[300px] lg:w-[400px] relative shrink-0 h-[35vh] sm:h-auto bg-black">
+                <img src={selectedItem.image} className="w-full h-full object-contain sm:object-cover" alt="Poster" loading="lazy" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#1a1a1c] via-transparent to-transparent sm:bg-gradient-to-r sm:from-transparent sm:via-[#1a1a1c]/40 sm:to-[#1a1a1c]"></div>
             </div>
 
             <div className="flex-1 p-6 md:p-10 lg:p-12 flex flex-col overflow-y-auto">
@@ -595,31 +623,26 @@ export default function App() {
                            </button>
                         )}
 
-                        <div className="mt-12 flex flex-col gap-6 md:gap-8 shrink-0 pb-4">
+                        <div className="mt-12 flex flex-col gap-2 shrink-0 pb-4">
+                           {/* Mismo formato de la portada para sagas y similares */}
                            {sagaItems.length > 0 && (
-                              <div className="w-full">
-                                 <h4 className="text-white font-bold text-sm md:text-base mb-4 flex items-center gap-2"><Layers size={18} className="text-[#e5a00d]"/> Más de esta saga</h4>
-                                 <div className="flex gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
-                                    {sagaItems.map(item => (
-                                       <div key={item.id} className="snap-start shrink-0 w-24 md:w-32 cursor-pointer group" onClick={() => setSelectedItem(item)}>
-                                          <img src={item.image} alt={item.title} className="w-full aspect-[2/3] object-cover rounded-md group-hover:scale-105 transition-transform" loading="lazy" />
-                                       </div>
-                                    ))}
-                                 </div>
-                              </div>
+                              <MovieRow 
+                                  title="Más de esta saga" 
+                                  items={sagaItems} 
+                                  onSelect={setSelectedItem} 
+                                  icon={<Layers size={18} />} 
+                                  isModal={true}
+                              />
                            )}
 
                            {items.filter(i => !i.isSaga && i.id !== selectedItem.id && i.genres.some(g => selectedItem.genres.includes(g))).length > 0 && (
-                              <div className="w-full">
-                                 <h4 className="text-white font-bold text-sm md:text-base mb-4">Títulos similares recomendados</h4>
-                                 <div className="flex gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
-                                    {items.filter(i => !i.isSaga && i.id !== selectedItem.id && i.genres.some(g => selectedItem.genres.includes(g))).slice(0, 10).map(item => (
-                                       <div key={item.id} className="snap-start shrink-0 w-24 md:w-32 cursor-pointer group" onClick={() => setSelectedItem(item)}>
-                                          <img src={item.image} alt={item.title} className="w-full aspect-[2/3] object-cover rounded-md group-hover:scale-105 transition-transform shadow-md" loading="lazy" />
-                                       </div>
-                                    ))}
-                                 </div>
-                              </div>
+                              <MovieRow 
+                                  title="Títulos similares recomendados" 
+                                  items={shuffleArray(items.filter(i => !i.isSaga && i.id !== selectedItem.id && i.genres.some(g => selectedItem.genres.includes(g))))} 
+                                  onSelect={setSelectedItem} 
+                                  icon={<Star size={18} />} 
+                                  isModal={true}
+                              />
                            )}
                         </div>
                     </div>
