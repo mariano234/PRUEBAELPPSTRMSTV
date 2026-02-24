@@ -28,7 +28,12 @@ exports.handler = async function(event, context) {
       })
     });
     const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Código inválido' }) };
+    
+    // Si falla el código, lo imprimimos en la terminal de Netlify Dev para ver el motivo real
+    if (!tokenData.access_token) {
+        console.error("Fallo de Discord (Fase A):", tokenData);
+        return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Código inválido o ya usado', detalles: tokenData }) };
+    }
 
     // --- FASE B: Saber quién es el usuario ---
     const userRes = await fetch('https://discord.com/api/users/@me', {
@@ -48,17 +53,30 @@ exports.handler = async function(event, context) {
        return { statusCode: 403, body: JSON.stringify({ success: false, error: 'No tienes el rol VIP necesario' }) };
     }
 
-    // --- FASE E: Si tiene el rol, robar la contraseña del canal ---
+    // --- FASE E: Extraer el mensaje ---
     const msgRes = await fetch(`https://discord.com/api/channels/${CHANNEL_ID}/messages?limit=1`, {
       headers: { authorization: `Bot ${BOT_TOKEN}` }
     });
     const msgData = await msgRes.json();
-    const password = msgData[0].content; // El último mensaje es la contraseña
+
+    // Manejo de errores de Discord (por si el bot no tiene permisos en el canal)
+    if (msgData.message) {
+       console.error("Fallo de permisos del Bot (Fase E):", msgData);
+       return { statusCode: 403, body: JSON.stringify({ success: false, error: `Discord bloqueó al bot: ${msgData.message}` }) };
+    }
+
+    // Manejo de errores si el canal está vacío
+    if (!Array.isArray(msgData) || msgData.length === 0) {
+       return { statusCode: 404, body: JSON.stringify({ success: false, error: 'El canal de la contraseña está totalmente vacío.' }) };
+    }
+
+    const password = msgData[0].content; 
 
     // Mandar contraseña a tu React
     return { statusCode: 200, body: JSON.stringify({ success: true, password: password }) };
 
   } catch (error) {
+    console.error("Error crítico en el backend:", error);
     return { statusCode: 500, body: JSON.stringify({ success: false, error: error.message }) };
   }
 };

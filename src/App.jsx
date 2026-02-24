@@ -143,9 +143,8 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
 
   if (!items || items.length === 0) return null;
 
-  // LÓGICA INTELIGENTE "VER MÁS"
   const MAX_NORMAL = 11;
-  const SMART_LIMIT = 15; // Si hay 15 o menos, muéstralas todas para no generar botón redundante.
+  const SMART_LIMIT = 15; 
   
   let displayItems, hasMore;
 
@@ -249,6 +248,9 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
   );
 };
 
+// Variable externa para evitar el doble-fetch del React Strict Mode de forma robusta
+let isFetchingDiscord = false;
+
 export default function App() {
   const [items, setItems] = useState([]);
   const [sagas, setSagas] = useState([]);
@@ -268,8 +270,10 @@ export default function App() {
 
   // NUEVO: Estados para la Autenticación de Discord
   const [streamPassword, setStreamPassword] = useState("••••••••••••");
+  const [streamSid, setStreamSid] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
-
+  const [copied, setCopied] = useState(false);
+  
   // Estados de paginación y filtros cruzados múltiples
   const [visibleCount, setVisibleCount] = useState(100);
   const [sortBy, setSortBy] = useState('default');
@@ -293,8 +297,12 @@ export default function App() {
   useEffect(() => {
     // 0. Recuperar contraseña guardada si existe (para sobrevivir a recargas de página)
     const savedPassword = sessionStorage.getItem('stream_password');
+    const savedSid = sessionStorage.getItem('stream_sid');
     if (savedPassword) {
         setStreamPassword(savedPassword);
+    }
+    if (savedSid) {
+        setStreamSid(savedSid);
     }
 
     // 1. Revisamos si en la URL hay un "?code=..." o la pestaña "?tab=directos"
@@ -308,40 +316,117 @@ export default function App() {
     }
     
     if (code) {
+        // Evitamos el doble fetch por el React Strict Mode usando variable global
+        if (isFetchingDiscord) return;
+        isFetchingDiscord = true;
+
         setIsVerifying(true);
         setStreamPassword("Verificando...");
+        
+        // Limpiamos la URL INMEDIATAMENTE para que React Strict Mode no repita el fetch si desmonta el componente
+        window.history.replaceState({}, document.title, window.location.pathname + "?tab=directos");
         
         // 2. Le mandamos el código a nuestro backend mejorado con control de errores
         fetch(`/.netlify/functions/verificar?code=${code}`)
             .then(async res => {
                 if (!res.ok) {
-                    // Si el servidor responde con error (ej. 404 o 500), capturamos el texto
                     const text = await res.text();
-                    throw new Error(`Error HTTP ${res.status}: ${text}`);
+                    throw new Error(`HTTP ${res.status}: ${text}`);
                 }
                 return res.json();
             })
             .then(data => {
                 if(data.success) {
-                    setStreamPassword(data.password); // ¡Rol correcto! Mostramos contraseña
-                    sessionStorage.setItem('stream_password', data.password); // Guardamos en caché de sesión
+                    // Verificamos que Discord no nos haya devuelto un mensaje vacío
+                    if (!data.password || data.password.trim() === "") {
+                        setStreamPassword("❌ Activa 'Message Content Intent' en el Bot");
+                    } else {
+                        // Limpiamos el mensaje crudo de Discord
+                        const rawContent = data.password.trim();
+                        
+                        // PARSEO MEJORADO PARA EL NUEVO FORMATO:
+                        // Contraseña: 'VALOR'
+                        // Cookie: 'VALOR'
+                        const passMatch = rawContent.match(/Contraseña:\s*['"](.*?)['"]/i);
+                        const cookieMatch = rawContent.match(/Cookie:\s*['"](.*?)['"]/i);
+                        
+                        let finalPass = "";
+                        let finalSid = null;
+
+                        if (passMatch) {
+                            finalPass = passMatch[1].trim();
+                        } else {
+                            // Fallback por si mandas el mensaje antiguo con | o sin formato
+                            const parts = rawContent.replace(/^['"]|['"]$/g, '').split('|');
+                            finalPass = parts[0].trim();
+                            if (parts.length > 1) finalSid = parts[1].trim();
+                        }
+
+                        if (cookieMatch) {
+                            finalSid = cookieMatch[1].trim();
+                        }
+
+                        setStreamPassword(finalPass); // Mostramos contraseña limpia
+                        sessionStorage.setItem('stream_password', finalPass); // Guardamos en caché de sesión
+                        
+                        if (finalSid) {
+                            setStreamSid(finalSid);
+                            sessionStorage.setItem('stream_sid', finalSid);
+                        } else if (!cookieMatch && !rawContent.includes('|')) {
+                            setStreamSid(null);
+                            sessionStorage.removeItem('stream_sid');
+                        }
+                    }
                 } else {
-                    setStreamPassword("Rol Denegado");
-                    alert("No tienes permiso: " + data.error);
+                    setStreamPassword("❌ " + (data.error || "Rol Denegado"));
                 }
-                // Limpiamos la URL para dejar solo ?tab=directos (y borrar el código largo)
-                window.history.replaceState({}, document.title, window.location.pathname + "?tab=directos");
-                setIsVerifying(false);
             })
             .catch(err => {
                 console.error("Detalle técnico del error de conexión:", err);
-                setStreamPassword("Error Backend");
-                alert(`No se pudo conectar con el Backend.\n\nDetalle: ${err.message}\n\nAsegúrate de que la función Netlify esté subida correctamente.`);
+                setStreamPassword("❌ Error Backend: " + err.message);
+            })
+            .finally(() => {
                 setIsVerifying(false);
-                window.history.replaceState({}, document.title, window.location.pathname + "?tab=directos");
+                isFetchingDiscord = false; // Permitimos futuros fetch si el usuario pulsa de nuevo
             });
     }
   }, []);
+
+  const handleCopyCookie = () => {
+    if (!streamSid) return;
+    
+    // FORMATO JSON SOLICITADO
+    const cookieJson = [
+        {
+            "domain": ".angelthump.com",
+            "expirationDate": 1773072750.118371,
+            "hostOnly": false,
+            "httpOnly": false,
+            "name": "angelthump.sid",
+            "path": "/",
+            "sameSite": "no_restriction",
+            "secure": true,
+            "session": false,
+            "storeId": null,
+            "value": streamSid
+        }
+    ];
+
+    const textToCopy = JSON.stringify(cookieJson, null, 4);
+    
+    const textArea = document.createElement("textarea");
+    textArea.value = textToCopy;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000); 
+    } catch (err) {
+        console.error('Error al copiar', err);
+    }
+    document.body.removeChild(textArea);
+  };
 
   const translateLangs = (str) => {
     if (!str || str === 'N/A') return 'N/A';
@@ -549,14 +634,11 @@ export default function App() {
     
     let cats = [];
 
-    // Recomendados ahora carga 30 (activando el Ver más)
     cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 30), icon: <Star size={22}/> });
 
-    // Mejor valoradas ahora carga el Top 100 (activando el Ver más)
     const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 100);
     cats.push({ title: 'Mejor Valoradas', items: topRated, icon: null });
 
-    // Últimos Lanzamientos
     const currentYear = new Date().getFullYear();
     const recentReleases = [...items].filter(i => parseInt(i.year) === currentYear || parseInt(i.year) === currentYear - 1).sort((a, b) => parseInt(b.year) - parseInt(a.year));
     if (recentReleases.length > 0) {
@@ -597,7 +679,6 @@ export default function App() {
     rawDisplayItems.forEach(i => {
       if(i.videoQuality && i.videoQuality !== 'N/A') qualities.add(i.videoQuality);
     });
-    // Orden descendente (4K, FHD, HD, SD)
     return Array.from(qualities).sort((a, b) => b.localeCompare(a));
   }, [rawDisplayItems]);
 
@@ -605,7 +686,6 @@ export default function App() {
     const languages = new Set();
     rawDisplayItems.forEach(i => {
       if(i.language && i.language !== 'N/A') {
-         // Separa "Español, Inglés" para que no salgan idiomas duplicados
          i.language.split(',').forEach(l => languages.add(l.trim()));
       }
     });
@@ -624,7 +704,6 @@ export default function App() {
   const processedDisplayItems = useMemo(() => {
     let result = [...rawDisplayItems];
     
-    // Si seleccionas varios (ej: Acción, Comedia), busca películas que tengan al menos uno de ellos.
     if (filterGenres.length > 0) {
       result = result.filter(i => i.genres?.some(g => filterGenres.includes(g)));
     }
@@ -650,7 +729,6 @@ export default function App() {
     return result;
   }, [rawDisplayItems, filterGenres, filterQualities, filterLanguages, filterYears, sortBy]);
 
-  // Paginación de Resultados
   const paginatedItems = processedDisplayItems.slice(0, visibleCount);
 
   const sagaItems = useMemo(() => {
@@ -710,7 +788,6 @@ export default function App() {
       <div className="flex flex-col gap-3 md:gap-4 w-full lg:w-auto mt-4 md:mt-0">
         <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full">
           
-          {/* Filtro de Género */}
           <div className="relative flex-1 min-w-[130px] lg:flex-none">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
@@ -727,7 +804,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Filtro de Calidad */}
           <div className="relative flex-1 min-w-[110px] lg:flex-none">
             <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
@@ -744,7 +820,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Filtro de Idioma */}
           <div className="relative flex-1 min-w-[120px] lg:flex-none">
             <Globe className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
@@ -761,7 +836,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Filtro de Año */}
           <div className="relative flex-1 min-w-[100px] lg:flex-none">
             <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
@@ -778,7 +852,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Ordenación */}
           <div className="relative flex-1 min-w-[150px] lg:flex-none">
             <ArrowDownWideNarrow className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
@@ -795,7 +868,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* --- PÍLDORAS DE FILTROS ACTIVOS --- */}
         {hasActiveFilters && (
           <div className="flex flex-wrap items-center gap-2 mt-1">
             <span className="text-xs text-gray-500 font-medium mr-1">Filtros:</span>
@@ -843,18 +915,15 @@ export default function App() {
         ::-webkit-scrollbar-thumb:hover { background: #e5a00d; }
       `}</style>
 
-      {/* --- NAVBAR RESPONSIVO (Actualizado con Pestañas) --- */}
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
         <div className="px-4 md:px-12 py-3 md:py-4 flex flex-col lg:flex-row items-center justify-between gap-3 md:gap-6">
           
           <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-8 w-full lg:w-auto">
-            {/* Logo */}
             <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer shrink-0" onClick={() => {setActiveTab('inicio'); setSearchQuery(""); setSelectedCategory(null);}}>
               <ChevronRight size={28} className="-mr-2 md:-mr-3" />
               <span>ElPepe<span className="text-white font-light">Streams</span></span>
             </div>
 
-            {/* Pestañas de Navegación */}
             <div className="flex items-center gap-3 md:gap-6 text-[11px] sm:text-xs md:text-sm font-bold tracking-wide overflow-x-auto w-full sm:w-auto scrollbar-hide justify-center sm:justify-start pb-1 sm:pb-0">
                <button onClick={() => {setActiveTab('inicio'); setSearchQuery(""); setSelectedCategory(null);}} className={`flex items-center gap-1.5 transition-colors whitespace-nowrap px-2 py-1 rounded-md ${activeTab === 'inicio' ? 'text-[#e5a00d] bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Home size={16} className="hidden sm:block"/> INICIO</button>
                <button onClick={() => {setActiveTab('pelis'); setSearchQuery(""); setSelectedCategory(null);}} className={`flex items-center gap-1.5 transition-colors whitespace-nowrap px-2 py-1 rounded-md ${activeTab === 'pelis' ? 'text-[#e5a00d] bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Film size={16} className="hidden sm:block"/> PELIS</button>
@@ -863,7 +932,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Buscador (Se oculta en Directos y Series por ahora) */}
           {(activeTab === 'inicio' || activeTab === 'pelis') && (
             <div className="relative group w-full lg:max-w-md shrink-0">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#e5a00d] transition-colors" size={16} />
@@ -892,27 +960,23 @@ export default function App() {
         </div>
       ) : (
         <>
-          {/* --- VISTA: DIRECTOS --- */}
           {activeTab === 'directos' && (
             <div className="pt-32 md:pt-28 px-4 md:px-12 flex flex-col lg:flex-row gap-4 md:gap-6 h-[calc(100vh-2rem)] pb-8 animate-in fade-in duration-500">
                 
-                {/* Reproductor de Video (AngelThump Integrado de forma dinámica para evitar bloqueos) */}
                 <div className="flex-1 bg-black rounded-xl overflow-hidden border border-white/10 relative shadow-2xl min-h-[40vh] lg:min-h-0 flex items-center justify-center">
                     <div className="absolute inset-0 w-full h-full">
                         <iframe 
-                           title="AngelThump Stream"
-                           src={`https://player.angelthump.com/?channel=elpintaunas&parent=${window.location.hostname || 'localhost'}`} 
-                           width="100%"
-                           height="100%"
-                           frameBorder="0"
-                           allow="autoplay; fullscreen"
-                           allowFullScreen
-                           style={{ width: '100%', height: '100%', border: 'none' }}
+                           title="Player"
+                           allow="autoplay; fullscreen" 
+                           allowtransparency="true" 
+                           allowFullScreen 
+                           src="https://player.angelthump.com/?channel=elpintaunas" 
+                           seamless="seamless"
+                           style={{ border: 0, margin: 0, overflow: 'hidden', height: '100%', width: '100%' }}
                         ></iframe>
                     </div>
                 </div>
                 
-                {/* Sistema de Contraseña por Rol de Discord */}
                 <div className="w-full lg:w-[350px] xl:w-[400px] h-auto lg:h-full bg-[#36393f] rounded-xl overflow-hidden border border-white/10 flex flex-col shadow-2xl shrink-0 p-6 relative justify-center">
                     <div className="absolute top-0 left-0 right-0 bg-[#202225] p-3 border-b border-black/20 flex justify-center items-center">
                        <span className="font-bold text-white text-sm flex items-center gap-2"><Layers size={16} className="text-[#5865F2]" /> Acceso Premium</span>
@@ -920,7 +984,6 @@ export default function App() {
                     
                     <div className="flex flex-col items-center text-center mt-8">
                         <div className="bg-[#5865F2]/10 p-4 rounded-full mb-4 border border-[#5865F2]/30">
-                            {/* Logo de Discord */}
                             <svg className="w-10 h-10 text-[#5865F2]" fill="currentColor" viewBox="0 0 127.14 96.36">
                                 <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77.7,77.7,0,0,0,6.89,11.1,105.25,105.25,0,0,0,32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.56,65.3c-5.36,0-9.8-4.83-9.8-10.74s4.33-10.74,9.8-10.74,9.84,4.83,9.8,10.74C52.4,60.47,48,65.3,42.56,65.3Zm42,0c-5.36,0-9.8-4.83-9.8-10.74s4.33-10.74,9.8-10.74,9.84,4.83,9.8,10.74C94.4,60.47,90,65.3,84.56,65.3Z"/>
                             </svg>
@@ -930,7 +993,6 @@ export default function App() {
                             El directo está protegido. Verifica que tienes el rol requerido en nuestro servidor de Discord para obtener la contraseña actual.
                         </p>
                         
-                        {/* Botón oficial de OAuth2 (Apuntando a tu Client ID con redirección a ?tab=directos) */}
                         <a 
                            href="https://discord.com/oauth2/authorize?client_id=1475601631977406605&response_type=code&redirect_uri=https%3A%2F%2Felpepestreamstv.netlify.app%2F%3Ftab%3Ddirectos&scope=identify"
                            className={`bg-[#5865F2] hover:bg-[#4752C4] text-white font-bold py-3 px-6 rounded-md transition-all w-full shadow-lg hover:scale-105 flex items-center justify-center gap-2 text-sm ${isVerifying ? 'opacity-50 pointer-events-none' : ''}`}
@@ -938,18 +1000,39 @@ export default function App() {
                             {isVerifying ? 'Verificando...' : 'Verificar mi Rol en Discord'}
                         </a>
       
-                        <div className="mt-6 w-full bg-black/40 border border-white/5 rounded-lg p-4 transition-all">
+                        <div className="mt-6 w-full bg-black/40 border border-white/5 rounded-lg p-4 transition-all min-h-[70px]">
                             <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Contraseña Actual</span>
-                            <div className={`mt-1 text-lg font-mono font-bold select-text text-center ${streamPassword.includes('•') || streamPassword.includes('Verificando') ? 'text-gray-600 blur-[2px] select-none' : 'text-[#e5a00d]'}`}>
-                                {streamPassword}
+                            <div className={`mt-1 text-lg font-mono font-bold select-text text-center ${
+                                !streamPassword ? 'text-red-500 text-sm' : 
+                                streamPassword.includes('•') ? 'text-gray-600 blur-[2px] select-none' : 
+                                streamPassword.includes('Verificando') ? 'text-yellow-500 animate-pulse' : 
+                                streamPassword.includes('❌') ? 'text-red-500 text-sm' : 
+                                'text-[#e5a00d] drop-shadow-[0_0_8px_rgba(229,160,13,0.5)]'
+                            }`}>
+                                {streamPassword || "❌ Vacío"}
                             </div>
                         </div>
+
+                        {streamSid && (
+                            <div className="mt-3 w-full bg-black/40 border border-white/5 rounded-lg p-4 transition-all animate-in fade-in zoom-in duration-300">
+                                <span className="text-[10px] text-[#e5a00d] uppercase tracking-widest font-bold flex items-center gap-1"><Info size={12}/> Cookie (angelthump.sid)</span>
+                                <div className="mt-2 flex flex-col gap-2">
+                                    <button 
+                                        onClick={handleCopyCookie} 
+                                        className={`w-full text-xs font-bold p-3 rounded transition-all flex items-center justify-center gap-2 ${copied ? 'bg-green-500 text-black' : 'bg-[#e5a00d] text-black hover:scale-105'}`}
+                                    >
+                                        <Layers size={14} />
+                                        {copied ? '¡JSON Copiado!' : 'Copiar Cookie JSON'}
+                                    </button>
+                                </div>
+                                <p className="text-[9px] text-gray-500 mt-2 leading-tight">Copia el JSON e impórtalo en tu extensión de cookies para entrar sin contraseña.</p>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
           )}
 
-          {/* --- VISTA: SERIES --- */}
           {activeTab === 'series' && (
             <div className="pt-32 px-4 md:px-12 flex flex-col items-center justify-center text-center h-[70vh] animate-in zoom-in-95 duration-500">
                 <div className="bg-neutral-900/50 p-6 rounded-full border border-white/5 mb-6 shadow-2xl">
@@ -960,7 +1043,6 @@ export default function App() {
             </div>
           )}
 
-          {/* --- VISTA: INICIO Y PELÍCULAS --- */}
           {(activeTab === 'inicio' || activeTab === 'pelis') && (
             <div className="animate-in fade-in duration-300">
               {heroItem && !searchQuery && !selectedCategory && (
@@ -982,15 +1064,12 @@ export default function App() {
               )}
 
               <div className={searchQuery || selectedCategory ? 'pt-40 md:pt-36 px-4 md:px-12' : '-mt-10 md:-mt-24 relative z-20'}>
-                
                 {searchQuery ? (
                    <div>
                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
                         <h2 className="text-xl md:text-3xl font-bold text-white">Resultados de búsqueda</h2>
-                        
                         <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
                           {renderFiltersAndSorting()}
-                          
                           <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
                             <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
                             <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
@@ -998,8 +1077,6 @@ export default function App() {
                         </div>
                      </div>
                      {renderGridOrList(paginatedItems)}
-                     
-                     {/* Botón Paginación */}
                      {processedDisplayItems.length > visibleCount && (
                         <div className="flex justify-center mt-10">
                            <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
@@ -1013,26 +1090,20 @@ export default function App() {
                      <button onClick={() => setSelectedCategory(null)} className="flex items-center gap-2 text-gray-400 hover:text-[#e5a00d] mb-4 md:mb-8 transition-colors text-sm font-semibold">
                        <ChevronLeft size={20} /> VOLVER
                      </button>
-                     
                      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6 md:mb-8">
                        <h2 className="text-2xl md:text-4xl font-black text-white flex items-center gap-3 tracking-tight">
                          {selectedCategory.icon && <span className="text-[#e5a00d]">{selectedCategory.icon}</span>}
                          {selectedCategory.title}
                        </h2>
-                       
                        <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
                          {renderFiltersAndSorting()}
-
                          <div className="flex items-center gap-1 md:gap-2 bg-neutral-900/80 p-1 rounded-lg border border-white/5 w-max">
                            <button onClick={() => setViewMode('grid')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><Grid size={16} className="md:w-5 md:h-5" /></button>
                            <button onClick={() => setViewMode('list')} className={`p-1.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#e5a00d] text-black shadow' : 'text-gray-400 hover:text-white'}`}><ListIcon size={16} className="md:w-5 md:h-5" /></button>
                          </div>
                        </div>
                      </div>
-
                      {renderGridOrList(paginatedItems)}
-
-                     {/* Botón Paginación */}
                      {processedDisplayItems.length > visibleCount && (
                         <div className="flex justify-center mt-10">
                            <button onClick={() => setVisibleCount(v => v + 100)} className="bg-neutral-800 hover:bg-[#e5a00d] text-white hover:text-black font-bold py-3 px-8 rounded-full transition-all border border-white/10 hover:scale-105 text-sm md:text-base shadow-lg">
@@ -1063,27 +1134,20 @@ export default function App() {
       {selectedItem && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 md:p-8 bg-black/95 backdrop-blur-xl animate-in fade-in duration-300">
           <div className="absolute inset-0" onClick={() => setSelectedItem(null)}></div>
-          
           <div className="bg-[#1a1a1c] w-full h-full md:h-auto md:max-w-6xl md:rounded-2xl overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] relative flex flex-col sm:flex-row max-h-[100vh] sm:max-h-[95vh] border-0 md:border border-white/10 animate-in zoom-in-95 duration-300">
-            
             <button onClick={() => setSelectedItem(null)} className="absolute top-4 right-4 md:top-6 md:right-6 z-50 p-2 bg-black/50 hover:bg-[#e5a00d] text-white hover:text-black rounded-full transition-all">
               <X size={24} />
             </button>
-
             <div className="w-full sm:w-[250px] md:w-[300px] lg:w-[400px] relative shrink-0 h-[35vh] sm:h-auto bg-black">
                 <img src={selectedItem.image} className="w-full h-full object-contain sm:object-cover" alt="Poster" />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1a1a1c] via-transparent to-transparent sm:bg-gradient-to-r sm:from-transparent sm:via-[#1a1a1c]/40 sm:to-[#1a1a1c]"></div>
             </div>
-
             <div className="flex-1 p-6 md:p-10 lg:p-12 flex flex-col overflow-y-auto">
-                
                 {selectedItem.isSaga ? (
                     <div className="flex flex-col flex-1">
                         <div className="text-[#e5a00d] font-bold text-xs md:text-sm mb-2 flex items-center gap-1 uppercase tracking-widest"><Layers size={14}/> Colección Oficial</div>
                         <h2 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-6 leading-snug pb-2">{selectedItem.title}</h2>
-                        
                         <p className="text-gray-400 text-sm md:text-base lg:text-lg font-light leading-relaxed mb-8">Esta es una colección que agrupa varias películas de tu biblioteca. Selecciona la película que deseas ver o descargar.</p>
-                        
                         <div className="mt-4 flex flex-col gap-8 shrink-0 pb-4">
                            <div className="w-full">
                               <h4 className="text-white font-bold text-sm md:text-base mb-4 border-b border-white/10 pb-2">Películas en tu biblioteca ({selectedItem.movies.length})</h4>
@@ -1108,28 +1172,23 @@ export default function App() {
                             <span key={g} className="text-[#e5a00d] text-[10px] md:text-xs font-black uppercase tracking-widest">{g}</span>
                           ))}
                         </div>
-                        
                         {selectedItem.collection && (
                             <div className="text-gray-400 font-bold text-xs md:text-sm mb-2 flex items-center gap-1 cursor-pointer hover:text-white transition-colors" onClick={() => setSelectedItem(sagas.find(s => s.id === `saga-${selectedItem.collection.id}`))}>
                                 <Layers size={14}/> {selectedItem.collection.name} <ChevronRight size={14}/>
                             </div>
                         )}
-
                         <h2 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-6 leading-snug pb-2">{selectedItem.title}</h2>
-                        
                         <div className="flex flex-wrap items-center gap-3 md:gap-4 mb-6">
                           <div className="flex flex-col">
                             <span className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Año</span>
                             <span className="text-white font-bold">{selectedItem.year}</span>
                           </div>
                           <div className="w-px h-6 md:h-8 bg-white/10 mx-1 md:mx-2"></div>
-                          
                           <div className="flex flex-col">
                             <span className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-tighter">TMDB</span>
                             <span className="text-white font-bold flex items-center gap-1"><Star size={14} className="text-[#e5a00d]" fill="currentColor"/> {selectedItem.rating}</span>
                           </div>
                           <div className="w-px h-6 md:h-8 bg-white/10 mx-1 md:mx-2"></div>
-
                           <div className="flex flex-col">
                             <span className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Calidad</span>
                             <span className={`px-2 py-0.5 rounded text-[10px] md:text-[11px] font-black mt-1 uppercase border ${selectedItem.videoQuality === '4K' ? 'bg-[#e5a00d] text-black border-[#e5a00d]' : 'bg-white/10 text-white border-white/20'}`}>
@@ -1142,9 +1201,7 @@ export default function App() {
                             <span className="text-gray-300 font-medium text-xs md:text-sm mt-1">{selectedItem.language}</span>
                           </div>
                         </div>
-
                         <p className="text-gray-400 text-sm md:text-base lg:text-lg font-light leading-relaxed mb-8">{selectedItem.description}</p>
-                        
                         {selectedItem.link !== '#' ? (
                            <a href={selectedItem.link} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 bg-[#e5a00d] hover:bg-[#c9890a] text-black font-black py-4 px-6 md:px-10 rounded-full text-sm md:text-lg transition-all hover:scale-105 shadow-xl shadow-[#e5a00d]/10 w-full md:w-max group shrink-0">
                              <Download size={22} className="group-hover:translate-y-1 transition-transform" /> DESCARGAR A MI BIBLIOTECA
@@ -1154,7 +1211,6 @@ export default function App() {
                              <AlertTriangle size={22} /> ENLACE NO DISPONIBLE
                            </button>
                         )}
-
                         <div className="mt-12 flex flex-col gap-2 shrink-0 pb-4">
                            {sagaItems.length > 0 && (
                               <MovieRow 
@@ -1166,7 +1222,6 @@ export default function App() {
                                   onTitleClick={() => setSelectedItem(sagas.find(s => s.id === `saga-${selectedItem.collection.id}`))}
                               />
                            )}
-
                            {items.filter(i => !i.isSaga && i.id !== selectedItem.id && i.genres.some(g => selectedItem.genres.includes(g))).length > 0 && (
                               <MovieRow 
                                   title="Títulos similares recomendados" 
