@@ -248,33 +248,52 @@ const MovieRow = ({ title, items, onSelect, onCategoryClick, onTitleClick, icon,
   );
 };
 
-// Variable externa para evitar el doble-fetch del React Strict Mode de forma robusta
+// Obtenemos los parámetros iniciales de forma segura antes de montar
+const getInitialURLParams = () => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+        tab: params.get('tab') || (params.get('code') ? 'directos' : 'inicio'),
+        q: params.get('q') || '',
+        v: params.get('v') || null,
+        cat: params.get('cat') || null,
+        code: params.get('code') || null
+    };
+};
+
 let isFetchingDiscord = false;
 
 export default function App() {
+  const initParams = useMemo(getInitialURLParams, []);
+
+  // ESTADOS DE LA BASE DE DATOS
   const [items, setItems] = useState([]);
   const [sagas, setSagas] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   
+  // ESTADOS DE NAVEGACIÓN (Inicializados con los parámetros de la URL)
+  const [activeTab, setActiveTab] = useState(initParams.tab); 
+  const [searchQuery, setSearchQuery] = useState(initParams.q);
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
+  
+  // ESTADOS DE CARGA (¡Lazy Loading!)
+  const [dataFetched, setDataFetched] = useState(false);
+  const [loading, setLoading] = useState(initParams.tab === 'inicio' || initParams.tab === 'pelis');
+  const [error, setError] = useState(null);
   const [heroItem, setHeroItem] = useState(null);
   
-  const [searchQuery, setSearchQuery] = useState("");
+  // REFERENCIAS PARA RECUPERAR ESTADO PROFUNDO (Deep Links) DESPUÉS DEL FETCH
+  const initialVRef = useRef(initParams.v);
+  const initialCatRef = useRef(initParams.cat);
+
   const [isScrolled, setIsScrolled] = useState(false);
   const [viewMode, setViewMode] = useState('grid'); 
-  
-  // Estado para controlar la pestaña activa (inicio, pelis, series, directos)
-  const [activeTab, setActiveTab] = useState('inicio'); 
 
-  // NUEVO: Estados para la Autenticación de Discord
   const [streamPassword, setStreamPassword] = useState("••••••••••••");
   const [streamSid, setStreamSid] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
   
-  // Estados de paginación y filtros cruzados múltiples
   const [visibleCount, setVisibleCount] = useState(100);
   const [sortBy, setSortBy] = useState('default');
   const [filterGenres, setFilterGenres] = useState([]);
@@ -291,42 +310,85 @@ export default function App() {
       document.head.appendChild(link);
     }
     link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>";
+    
+    const handleScroll = () => setIsScrolled(window.scrollY > 50);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // --- NUEVO: Motor de Autenticación de Discord ---
+  // --- SINCRONIZADOR DE URL ---
+  // Mantiene la barra de direcciones perfectamente sincronizada con la vista actual sin recargar la web.
   useEffect(() => {
-    // 0. Recuperar contraseña guardada si existe (para sobrevivir a recargas de página)
-    const savedPassword = sessionStorage.getItem('stream_password');
-    const savedSid = sessionStorage.getItem('stream_sid');
-    if (savedPassword) {
-        setStreamPassword(savedPassword);
-    }
-    if (savedSid) {
-        setStreamSid(savedSid);
+    const url = new URL(window.location);
+    let changed = false;
+
+    // Limpiamos el token the discord para no ensuciar la URL si existe
+    if (url.searchParams.has('code')) {
+        url.searchParams.delete('code');
+        changed = true;
     }
 
-    // 1. Revisamos si en la URL hay un "?code=..." o la pestaña "?tab=directos"
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const tab = urlParams.get('tab');
-    
-    // Si la URL indica directos o volvemos de loguearnos, activamos la pestaña
-    if (tab === 'directos' || code) {
-        setActiveTab('directos');
+    const currentTab = url.searchParams.get('tab');
+    if (activeTab === 'inicio') {
+        if (currentTab) { url.searchParams.delete('tab'); changed = true; }
+    } else {
+        if (currentTab !== activeTab) { url.searchParams.set('tab', activeTab); changed = true; }
     }
+
+    const currentQ = url.searchParams.get('q');
+    if (searchQuery) {
+        if (currentQ !== searchQuery) { url.searchParams.set('q', searchQuery); changed = true; }
+    } else {
+        if (currentQ) { url.searchParams.delete('q'); changed = true; }
+    }
+
+    const currentV = url.searchParams.get('v');
+    if (selectedItem) {
+        if (currentV !== selectedItem.id) { url.searchParams.set('v', selectedItem.id); changed = true; }
+    } else {
+        if (currentV) { url.searchParams.delete('v'); changed = true; }
+    }
+
+    const currentCat = url.searchParams.get('cat');
+    if (selectedCategory) {
+        if (currentCat !== selectedCategory.title) { url.searchParams.set('cat', selectedCategory.title); changed = true; }
+    } else {
+        if (currentCat) { url.searchParams.delete('cat'); changed = true; }
+    }
+
+    if (changed) {
+        window.history.replaceState({}, '', url);
+    }
+  }, [activeTab, selectedItem, searchQuery, selectedCategory]);
+
+  // --- MOTOR DE AUTENTICACIÓN MEJORADO ---
+  useEffect(() => {
+    const savedPassword = sessionStorage.getItem('stream_password');
+    const savedSid = sessionStorage.getItem('stream_sid');
+    const authTime = sessionStorage.getItem('stream_auth_time');
+
+    // Expirar la caché después de 12 horas (1000 * 60 * 60 * 12 ms)
+    const CACHE_LIFETIME = 12 * 60 * 60 * 1000;
+    const isCacheValid = authTime && (Date.now() - parseInt(authTime) < CACHE_LIFETIME);
+
+    if (savedPassword && isCacheValid) {
+        setStreamPassword(savedPassword);
+        if (savedSid) setStreamSid(savedSid);
+    } else {
+        sessionStorage.removeItem('stream_password');
+        sessionStorage.removeItem('stream_sid');
+        sessionStorage.removeItem('stream_auth_time');
+    }
+
+    const code = initParams.code;
     
     if (code) {
-        // Evitamos el doble fetch por el React Strict Mode usando variable global
         if (isFetchingDiscord) return;
         isFetchingDiscord = true;
 
         setIsVerifying(true);
         setStreamPassword("Verificando...");
         
-        // Limpiamos la URL INMEDIATAMENTE para que React Strict Mode no repita el fetch si desmonta el componente
-        window.history.replaceState({}, document.title, window.location.pathname + "?tab=directos");
-        
-        // 2. Le mandamos el código a nuestro backend mejorado con control de errores
         fetch(`/.netlify/functions/verificar?code=${code}`)
             .then(async res => {
                 if (!res.ok) {
@@ -337,42 +399,45 @@ export default function App() {
             })
             .then(data => {
                 if(data.success) {
-                    // Verificamos que Discord no nos haya devuelto un mensaje vacío
                     if (!data.password || data.password.trim() === "") {
                         setStreamPassword("❌ Activa 'Message Content Intent' en el Bot");
                     } else {
-                        // Limpiamos el mensaje crudo de Discord
-                        const rawContent = data.password.trim();
-                        
-                        // PARSEO MEJORADO PARA EL NUEVO FORMATO:
-                        // Contraseña: 'VALOR'
-                        // Cookie: 'VALOR'
-                        const passMatch = rawContent.match(/Contraseña:\s*['"](.*?)['"]/i);
-                        const cookieMatch = rawContent.match(/Cookie:\s*['"](.*?)['"]/i);
+                        // Limpiamos formato markdown oculto de Discord (asteriscos y código) PERO MANTENEMOS los guiones bajos (_)
+                        let cleanText = data.password.replace(/[*`]/g, '').trim();
+                        cleanText = cleanText.replace(/^['"]|['"]$/g, '').trim();
                         
                         let finalPass = "";
                         let finalSid = null;
 
-                        if (passMatch) {
-                            finalPass = passMatch[1].trim();
-                        } else {
-                            // Fallback por si mandas el mensaje antiguo con | o sin formato
-                            const parts = rawContent.replace(/^['"]|['"]$/g, '').split('|');
-                            finalPass = parts[0].trim();
-                            if (parts.length > 1) finalSid = parts[1].trim();
+                        // Regex ultra-robusto: Captura todo tras "Contraseña:" hasta llegar a "Cookie:" o el final.
+                        const passRegex = /Contrase[ñn]a\s*:\s*(.*?)(?=\s*Cookie\s*:|$)/i;
+                        const cookieRegex = /Cookie\s*:\s*(.*)/i;
+
+                        const pMatch = cleanText.match(passRegex);
+                        const cMatch = cleanText.match(cookieRegex);
+
+                        if (pMatch) finalPass = pMatch[1].trim().replace(/^['"]|['"]$/g, '');
+                        if (cMatch) finalSid = cMatch[1].trim().replace(/^['"]|['"]$/g, '');
+
+                        // Sistema de rescate: si las regex no encontraron las etiquetas, busca el separador '|' o usa el texto completo
+                        if (!finalPass && !cMatch) {
+                            if (cleanText.includes('|')) {
+                                const parts = cleanText.split('|');
+                                finalPass = parts[0].trim().replace(/^['"]|['"]$/g, '');
+                                finalSid = parts[1] ? parts[1].trim().replace(/^['"]|['"]$/g, '') : null;
+                            } else {
+                                finalPass = cleanText.replace(/Contrase.*?:/i, '').trim().replace(/^['"]|['"]$/g, '');
+                            }
                         }
 
-                        if (cookieMatch) {
-                            finalSid = cookieMatch[1].trim();
-                        }
-
-                        setStreamPassword(finalPass); // Mostramos contraseña limpia
-                        sessionStorage.setItem('stream_password', finalPass); // Guardamos en caché de sesión
+                        setStreamPassword(finalPass || "Sin Contraseña");
+                        sessionStorage.setItem('stream_password', finalPass || "Sin Contraseña");
+                        sessionStorage.setItem('stream_auth_time', Date.now().toString());
                         
                         if (finalSid) {
                             setStreamSid(finalSid);
                             sessionStorage.setItem('stream_sid', finalSid);
-                        } else if (!cookieMatch && !rawContent.includes('|')) {
+                        } else {
                             setStreamSid(null);
                             sessionStorage.removeItem('stream_sid');
                         }
@@ -382,38 +447,60 @@ export default function App() {
                 }
             })
             .catch(err => {
-                console.error("Detalle técnico del error de conexión:", err);
+                console.error("Detalle técnico:", err);
                 setStreamPassword("❌ Error Backend: " + err.message);
             })
             .finally(() => {
                 setIsVerifying(false);
-                isFetchingDiscord = false; // Permitimos futuros fetch si el usuario pulsa de nuevo
+                isFetchingDiscord = false;
             });
     }
-  }, []);
+  }, [initParams.code]);
+
+  // NUEVO: Verificar si la caché expiró silenciosamente mientras navegabas por otras pestañas
+  useEffect(() => {
+      if (activeTab === 'directos' && !isVerifying) {
+          const authTime = sessionStorage.getItem('stream_auth_time');
+          const CACHE_LIFETIME = 12 * 60 * 60 * 1000;
+          if (authTime && (Date.now() - parseInt(authTime) > CACHE_LIFETIME)) {
+              sessionStorage.removeItem('stream_password');
+              sessionStorage.removeItem('stream_sid');
+              sessionStorage.removeItem('stream_auth_time');
+              setStreamPassword("••••••••••••");
+              setStreamSid(null);
+          }
+      }
+  }, [activeTab, isVerifying]);
+
+  // NUEVO: Inyectar la cookie en el dominio local por comodidad para las extensiones de Firefox/Chrome
+  useEffect(() => {
+      if (streamSid) {
+          // Simplificamos la cookie local para que Firefox Incógnito no la bloquee por parecer de rastreo cruzado
+          document.cookie = `angelthump.sid=${streamSid}; path=/; max-age=31536000`;
+      }
+  }, [streamSid]);
 
   const handleCopyCookie = () => {
     if (!streamSid) return;
     
-    // FORMATO JSON SOLICITADO
+    // Corregido: Usar Math.floor() para asegurar un número entero en la fecha,
+    // o las extensiones de cookies rechazarán la importación silenciosamente.
     const cookieJson = [
         {
             "domain": ".angelthump.com",
-            "expirationDate": 1773072750.118371,
+            "expirationDate": Math.floor(Date.now() / 1000) + 31536000,
             "hostOnly": false,
-            "httpOnly": false,
+            "httpOnly": true,
             "name": "angelthump.sid",
             "path": "/",
             "sameSite": "no_restriction",
             "secure": true,
             "session": false,
-            "storeId": null,
             "value": streamSid
         }
     ];
 
     const textToCopy = JSON.stringify(cookieJson, null, 4);
-    
     const textArea = document.createElement("textarea");
     textArea.value = textToCopy;
     document.body.appendChild(textArea);
@@ -422,10 +509,26 @@ export default function App() {
         document.execCommand('copy');
         setCopied(true);
         setTimeout(() => setCopied(false), 2000); 
-    } catch (err) {
-        console.error('Error al copiar', err);
+    } catch (err) { 
+        console.error('Error al copiar', err); 
     }
     document.body.removeChild(textArea);
+  };
+
+  const handleCopyPass = () => {
+      if (!streamPassword || streamPassword.includes('❌') || streamPassword.includes('••••') || streamPassword.includes('Verificando')) return;
+      const textArea = document.createElement("textarea");
+      textArea.value = streamPassword;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+          document.execCommand('copy');
+          setCopiedPass(true);
+          setTimeout(() => setCopiedPass(false), 2000); 
+      } catch (err) { 
+          console.error('Error al copiar contraseña', err); 
+      }
+      document.body.removeChild(textArea);
   };
 
   const translateLangs = (str) => {
@@ -438,64 +541,31 @@ export default function App() {
 
   const fetchTMDB = async (title, year) => {
     try {
-      let cleanTitle = title
-        .replace(/\[.*?\]/g, ' ') 
-        .replace(/\(.*?\)/g, ' ') 
-        .replace(/[\[\]\(\)]/g, '') 
-        .replace(/!/g, '') 
-        .replace(/\s1$/, '') 
-        .trim();
-        
+      let cleanTitle = title.replace(/\[.*?\]/g, ' ').replace(/\(.*?\)/g, ' ').replace(/[\[\]\(\)]/g, '').replace(/!/g, '').replace(/\s1$/, '').trim();
       const query = encodeURIComponent(cleanTitle);
       const cleanYear = year ? year.toString().match(/\d{4}/)?.[0] : '';
-      
-      let searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}&language=es-ES&primary_release_year=${cleanYear || ''}`;
-      let res = await fetch(searchUrl);
+      let res = await fetch(`https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}&language=es-ES&primary_release_year=${cleanYear || ''}`);
       let data = await res.json();
-      
       if ((!data.results || data.results.length === 0) && cleanYear) {
-         searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}&language=es-ES`;
-         res = await fetch(searchUrl);
+         res = await fetch(`https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}&language=es-ES`);
          data = await res.json();
       }
-
       if ((!data.results || data.results.length === 0) && cleanTitle.match(/[:\-]/)) {
          const shortTitle = cleanTitle.split(/[:\-]/)[0].trim();
-         searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(shortTitle)}&language=es-ES&primary_release_year=${cleanYear || ''}`;
-         res = await fetch(searchUrl);
+         res = await fetch(`https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(shortTitle)}&language=es-ES&primary_release_year=${cleanYear || ''}`);
          data = await res.json();
       }
-
-      if ((!data.results || data.results.length === 0) && cleanTitle.split(' ').length > 2) {
-         const ultraShort = cleanTitle.split(' ').slice(0, 2).join(' ');
-         searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(ultraShort)}&language=es-ES&primary_release_year=${cleanYear || ''}`;
-         res = await fetch(searchUrl);
-         data = await res.json();
-      }
-      
       if (data.results?.[0]) {
         const tmdbId = data.results[0].id;
-        const detailUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=es-ES`;
-        const detailRes = await fetch(detailUrl);
+        const detailRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=es-ES`);
         const movie = await detailRes.json();
-
-        let collectionData = null;
-        if (movie.belongs_to_collection) {
-            collectionData = {
-                id: movie.belongs_to_collection.id,
-                name: movie.belongs_to_collection.name,
-                poster: movie.belongs_to_collection.poster_path ? `https://image.tmdb.org/t/p/w500${movie.belongs_to_collection.poster_path}` : null,
-                backdrop: movie.belongs_to_collection.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.belongs_to_collection.backdrop_path}` : null,
-            };
-        }
-
         return {
           overview: movie.overview,
           poster: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null,
           backdrop: movie.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}` : null,
           year: movie.release_date?.split('-')[0],
-          genres: movie.genres?.map(g => g.name) || movie.genre_ids?.map(id => TMDB_GENRES[id]).filter(Boolean) || [],
-          collection: collectionData,
+          genres: movie.genres?.map(g => g.name) || [],
+          collection: movie.belongs_to_collection ? { id: movie.belongs_to_collection.id, name: movie.belongs_to_collection.name, poster: movie.belongs_to_collection.poster_path ? `https://image.tmdb.org/t/p/w500${movie.belongs_to_collection.poster_path}` : null, backdrop: movie.belongs_to_collection.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.belongs_to_collection.backdrop_path}` : null } : null,
           rating: movie.vote_average ? movie.vote_average.toFixed(1) : 'N/A'
         };
       }
@@ -505,34 +575,27 @@ export default function App() {
 
   const fetchContent = async () => {
     try {
-      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv`;
-      const response = await fetch(url);
+      const response = await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv`);
       const csvText = await response.text();
-      
       const parsedData = parseCSV(csvText);
       const headers = parsedData[0].map(h => (h || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
       const getIdx = (keys) => headers.findIndex(h => keys.some(k => h.includes(k)));
-
+      
       const idxTitle = getIdx(['titulo', 'title']);
       const idxYear = getIdx(['ano', 'year', 'año']);
       const idxLang = getIdx(['idioma', 'lenguaje']);
       const idxQual = getIdx(['calidad']);
       const idxGen  = getIdx(['genero', 'género']);
-      
       const idxLink = 8; 
 
       const rawRows = parsedData.slice(1).filter(r => r[idxTitle]);
-
       const chunkSize = 15;
       const enriched = [];
       
       for (let i = 0; i < rawRows.length; i += chunkSize) {
         const chunk = rawRows.slice(i, i + chunkSize);
         const chunkEnriched = await Promise.all(chunk.map(async (row, idx) => {
-          const title = row[idxTitle];
-          const year = idxYear !== -1 ? row[idxYear] : '';
-          const tmdb = await fetchTMDB(title, year);
-          
+          const tmdb = await fetchTMDB(row[idxTitle], row[idxYear]);
           let finalLink = row.length > idxLink ? row[idxLink].trim() : '#';
           if (!finalLink || finalLink.toLowerCase() === 'link') finalLink = '#';
           else if (finalLink !== '#' && !finalLink.startsWith('http')) finalLink = 'https://' + finalLink;
@@ -540,10 +603,10 @@ export default function App() {
           return {
             id: `item-${i + idx}`,
             isSaga: false,
-            title,
-            year: tmdb?.year || year || '?',
+            title: row[idxTitle],
+            year: tmdb?.year || row[idxYear] || '?',
             description: tmdb?.overview || "Sin descripción disponible.",
-            image: tmdb?.poster || `https://via.placeholder.com/500x750/1a1a1c/e5a00d?text=${encodeURIComponent(title)}`,
+            image: tmdb?.poster || `https://via.placeholder.com/500x750/1a1a1c/e5a00d?text=${encodeURIComponent(row[idxTitle])}`,
             backdrop: tmdb?.backdrop || tmdb?.poster,
             videoQuality: formatVideoQuality(idxQual !== -1 ? row[idxQual] : ''),
             language: idxLang !== -1 ? translateLangs(row[idxLang]) : 'N/A',
@@ -589,21 +652,31 @@ export default function App() {
           setHeroItem(pool[Math.floor(Math.random() * pool.length)]);
       }
 
+      setDataFetched(true);
       setLoading(false);
-    } catch (err) {
-      setError(err.message);
-      setLoading(false);
-    }
+
+      // RESTAURACIÓN DE DEEP LINKS TRAS LA DESCARGA
+      if (initialVRef.current) {
+          const v = initialVRef.current;
+          const foundSaga = sagasArray.find(s => s.id === v);
+          const foundItem = enriched.find(i => i.id === v);
+          if (foundSaga) setSelectedItem(foundSaga);
+          else if (foundItem) setSelectedItem(foundItem);
+          initialVRef.current = null;
+      }
+      
+    } catch (err) { setError(err.message); setLoading(false); }
   };
 
+  // --- CARGA CONDICIONAL (Lazy Load de Pelis) ---
   useEffect(() => {
-    fetchContent();
-    const handleScroll = () => setIsScrolled(window.scrollY > 50);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+    // Solo cargamos la base de datos si NO estamos en Directos/Series y todavía no se ha bajado.
+    if (!dataFetched && (activeTab === 'inicio' || activeTab === 'pelis')) {
+        setLoading(true);
+        fetchContent();
+    }
+  }, [activeTab, dataFetched]);
 
-  // Reseteo de paginación y filtros al cambiar de sección
   useEffect(() => {
      setVisibleCount(100);
      setSortBy('default');
@@ -611,11 +684,11 @@ export default function App() {
      setFilterQualities([]);
      setFilterLanguages([]);
      setFilterYears([]);
-     if (searchQuery) {
+     if (searchQuery && dataFetched) {
          setSelectedCategory(null);
          window.scrollTo({ top: 0, behavior: 'smooth' });
      }
-  }, [searchQuery]);
+  }, [searchQuery, dataFetched]);
 
   useEffect(() => {
      setVisibleCount(100);
@@ -624,16 +697,15 @@ export default function App() {
      setFilterQualities([]);
      setFilterLanguages([]);
      setFilterYears([]);
-     if (selectedCategory) {
+     if (selectedCategory && dataFetched) {
          window.scrollTo({ top: 0, behavior: 'smooth' });
      }
-  }, [selectedCategory]);
+  }, [selectedCategory, dataFetched]);
 
   const categories = useMemo(() => {
-    if (searchQuery) return [];
+    if (searchQuery || items.length === 0) return [];
     
     let cats = [];
-
     cats.push({ title: 'Recomendados de hoy', items: shuffleArray(items).slice(0, 30), icon: <Star size={22}/> });
 
     const topRated = [...items].sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0)).slice(0, 100);
@@ -661,24 +733,28 @@ export default function App() {
     return [...cats, ...genreCats];
   }, [items, sagas, searchQuery]);
 
+  // RESTAURACIÓN DE CATEGORÍAS PROFUNDAS TRAS SU CÁLCULO
+  useEffect(() => {
+      if (categories.length > 0 && initialCatRef.current) {
+          const foundCat = categories.find(c => c.title === initialCatRef.current);
+          if (foundCat) setSelectedCategory(foundCat);
+          initialCatRef.current = null;
+      }
+  }, [categories]);
+
   const rawDisplayItems = searchQuery 
     ? items.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || i.description.toLowerCase().includes(searchQuery.toLowerCase()))
     : (selectedCategory ? selectedCategory.items : []);
 
-  // Listas dinámicas para los filtros desplegables
   const availableGenres = useMemo(() => {
     const genres = new Set();
-    rawDisplayItems.forEach(i => {
-      if(i.genres) i.genres.forEach(g => genres.add(g));
-    });
+    rawDisplayItems.forEach(i => { if(i.genres) i.genres.forEach(g => genres.add(g)); });
     return Array.from(genres).sort();
   }, [rawDisplayItems]);
 
   const availableQualities = useMemo(() => {
     const qualities = new Set();
-    rawDisplayItems.forEach(i => {
-      if(i.videoQuality && i.videoQuality !== 'N/A') qualities.add(i.videoQuality);
-    });
+    rawDisplayItems.forEach(i => { if(i.videoQuality && i.videoQuality !== 'N/A') qualities.add(i.videoQuality); });
     return Array.from(qualities).sort((a, b) => b.localeCompare(a));
   }, [rawDisplayItems]);
 
@@ -694,32 +770,21 @@ export default function App() {
 
   const availableYears = useMemo(() => {
     const years = new Set();
-    rawDisplayItems.forEach(i => {
-      if(i.year && i.year !== '?' && i.year !== 'N/A') years.add(i.year.toString());
-    });
+    rawDisplayItems.forEach(i => { if(i.year && i.year !== '?' && i.year !== 'N/A') years.add(i.year.toString()); });
     return Array.from(years).sort((a, b) => parseInt(b) - parseInt(a));
   }, [rawDisplayItems]);
 
-  // Aplicación de Filtros Múltiples Acumulativos y Ordenación
   const processedDisplayItems = useMemo(() => {
     let result = [...rawDisplayItems];
     
-    if (filterGenres.length > 0) {
-      result = result.filter(i => i.genres?.some(g => filterGenres.includes(g)));
-    }
-    if (filterQualities.length > 0) {
-      result = result.filter(i => filterQualities.includes(i.videoQuality));
-    }
-    if (filterLanguages.length > 0) {
-      result = result.filter(i => {
+    if (filterGenres.length > 0) result = result.filter(i => i.genres?.some(g => filterGenres.includes(g)));
+    if (filterQualities.length > 0) result = result.filter(i => filterQualities.includes(i.videoQuality));
+    if (filterLanguages.length > 0) result = result.filter(i => {
          if (!i.language) return false;
          const itemLangs = i.language.split(',').map(l => l.trim());
          return itemLangs.some(l => filterLanguages.includes(l));
-      });
-    }
-    if (filterYears.length > 0) {
-      result = result.filter(i => filterYears.includes(i.year?.toString()));
-    }
+    });
+    if (filterYears.length > 0) result = result.filter(i => filterYears.includes(i.year?.toString()));
 
     if (sortBy === 'az') result.sort((a, b) => (a.displayTitle || a.title).localeCompare(b.displayTitle || b.title));
     else if (sortBy === 'za') result.sort((a, b) => (b.displayTitle || b.title).localeCompare(a.displayTitle || a.title));
@@ -792,11 +857,7 @@ export default function App() {
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
               value="default" 
-              onChange={e => {
-                if (e.target.value !== 'default' && !filterGenres.includes(e.target.value)) {
-                  setFilterGenres([...filterGenres, e.target.value]);
-                }
-              }} 
+              onChange={e => { if (e.target.value !== 'default' && !filterGenres.includes(e.target.value)) setFilterGenres([...filterGenres, e.target.value]); }} 
               className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
             >
               <option value="default" disabled>+ Género</option>
@@ -808,11 +869,7 @@ export default function App() {
             <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
               value="default" 
-              onChange={e => {
-                if (e.target.value !== 'default' && !filterQualities.includes(e.target.value)) {
-                  setFilterQualities([...filterQualities, e.target.value]);
-                }
-              }} 
+              onChange={e => { if (e.target.value !== 'default' && !filterQualities.includes(e.target.value)) setFilterQualities([...filterQualities, e.target.value]); }} 
               className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
             >
               <option value="default" disabled>+ Calidad</option>
@@ -824,11 +881,7 @@ export default function App() {
             <Globe className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
               value="default" 
-              onChange={e => {
-                if (e.target.value !== 'default' && !filterLanguages.includes(e.target.value)) {
-                  setFilterLanguages([...filterLanguages, e.target.value]);
-                }
-              }} 
+              onChange={e => { if (e.target.value !== 'default' && !filterLanguages.includes(e.target.value)) setFilterLanguages([...filterLanguages, e.target.value]); }} 
               className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
             >
               <option value="default" disabled>+ Idioma</option>
@@ -840,11 +893,7 @@ export default function App() {
             <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
             <select 
               value="default" 
-              onChange={e => {
-                if (e.target.value !== 'default' && !filterYears.includes(e.target.value)) {
-                  setFilterYears([...filterYears, e.target.value]);
-                }
-              }} 
+              onChange={e => { if (e.target.value !== 'default' && !filterYears.includes(e.target.value)) setFilterYears([...filterYears, e.target.value]); }} 
               className="appearance-none bg-neutral-900 border border-white/20 text-xs md:text-sm rounded-lg pl-8 pr-3 py-2 md:py-2.5 text-white outline-none focus:border-[#e5a00d] w-full cursor-pointer truncate"
             >
               <option value="default" disabled>+ Año</option>
@@ -871,42 +920,22 @@ export default function App() {
         {hasActiveFilters && (
           <div className="flex flex-wrap items-center gap-2 mt-1">
             <span className="text-xs text-gray-500 font-medium mr-1">Filtros:</span>
-            
-            {filterGenres.map(g => (
-              <span key={g} onClick={() => setFilterGenres(filterGenres.filter(x => x !== g))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
-                {g} <X size={12} />
-              </span>
-            ))}
-            
-            {filterQualities.map(q => (
-              <span key={q} onClick={() => setFilterQualities(filterQualities.filter(x => x !== q))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
-                {q} <X size={12} />
-              </span>
-            ))}
-            
-            {filterLanguages.map(l => (
-              <span key={l} onClick={() => setFilterLanguages(filterLanguages.filter(x => x !== l))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
-                {l} <X size={12} />
-              </span>
-            ))}
-
-            {filterYears.map(y => (
-              <span key={y} onClick={() => setFilterYears(filterYears.filter(x => x !== y))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">
-                {y} <X size={12} />
-              </span>
-            ))}
-
-            <button onClick={() => { setFilterGenres([]); setFilterQualities([]); setFilterLanguages([]); setFilterYears([]); }} className="text-[11px] text-gray-400 hover:text-white underline ml-2 transition-colors">
-              Limpiar todos
-            </button>
+            {filterGenres.map(g => <span key={g} onClick={() => setFilterGenres(filterGenres.filter(x => x !== g))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">{g} <X size={12} /></span>)}
+            {filterQualities.map(q => <span key={q} onClick={() => setFilterQualities(filterQualities.filter(x => x !== q))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">{q} <X size={12} /></span>)}
+            {filterLanguages.map(l => <span key={l} onClick={() => setFilterLanguages(filterLanguages.filter(x => x !== l))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">{l} <X size={12} /></span>)}
+            {filterYears.map(y => <span key={y} onClick={() => setFilterYears(filterYears.filter(x => x !== y))} className="bg-[#e5a00d]/10 text-[#e5a00d] border border-[#e5a00d]/30 px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-colors">{y} <X size={12} /></span>)}
+            <button onClick={() => { setFilterGenres([]); setFilterQualities([]); setFilterLanguages([]); setFilterYears([]); }} className="text-[11px] text-gray-400 hover:text-white underline ml-2 transition-colors">Limpiar todos</button>
           </div>
         )}
       </div>
     );
   };
 
+  // Variable para saber si ya tenemos una contraseña válida cargada y cambiar el diseño del botón
+  const isLogged = streamPassword && !streamPassword.includes('❌') && !streamPassword.includes('••••');
+
   return (
-    <div className="min-h-screen bg-[#0f0f0f] text-gray-200 font-sans selection:bg-[#e5a00d] selection:text-black pb-20 overflow-x-hidden">
+    <div className={`bg-[#0f0f0f] text-gray-200 font-sans selection:bg-[#e5a00d] selection:text-black overflow-x-hidden ${activeTab === 'directos' ? 'min-h-screen pb-6' : 'min-h-screen pb-20'}`}>
       
       <style>{`
         ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -917,7 +946,6 @@ export default function App() {
 
       <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-[#141414]/95 backdrop-blur-md shadow-2xl' : 'bg-gradient-to-b from-black/90 to-transparent'}`}>
         <div className="px-4 md:px-12 py-3 md:py-4 flex flex-col lg:flex-row items-center justify-between gap-3 md:gap-6">
-          
           <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-8 w-full lg:w-auto">
             <div className="flex items-center gap-1 text-[#e5a00d] font-black text-2xl md:text-3xl tracking-tighter cursor-pointer shrink-0" onClick={() => {setActiveTab('inicio'); setSearchQuery(""); setSelectedCategory(null);}}>
               <ChevronRight size={28} className="-mr-2 md:-mr-3" />
@@ -935,13 +963,7 @@ export default function App() {
           {(activeTab === 'inicio' || activeTab === 'pelis') && (
             <div className="relative group w-full lg:max-w-md shrink-0">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#e5a00d] transition-colors" size={16} />
-              <input 
-                type="text" 
-                placeholder="Buscar películas..." 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-neutral-900/60 border border-white/10 rounded-full py-2.5 pl-10 md:pl-12 pr-4 md:pr-6 w-full focus:outline-none focus:border-[#e5a00d] focus:bg-black transition-all text-xs md:text-sm backdrop-blur-sm"
-              />
+              <input type="text" placeholder="Buscar películas..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-neutral-900/60 border border-white/10 rounded-full py-2.5 pl-10 md:pl-12 pr-4 md:pr-6 w-full focus:outline-none focus:border-[#e5a00d] focus:bg-black transition-all text-xs md:text-sm backdrop-blur-sm" />
             </div>
           )}
         </div>
@@ -961,71 +983,87 @@ export default function App() {
       ) : (
         <>
           {activeTab === 'directos' && (
-            <div className="pt-32 md:pt-28 px-4 md:px-12 flex flex-col lg:flex-row gap-4 md:gap-6 h-[calc(100vh-2rem)] pb-8 animate-in fade-in duration-500">
-                
-                <div className="flex-1 bg-black rounded-xl overflow-hidden border border-white/10 relative shadow-2xl min-h-[40vh] lg:min-h-0 flex items-center justify-center">
+            <div className="pt-24 md:pt-[5.5rem] px-4 md:px-12 flex flex-col lg:flex-row gap-4 md:gap-6 h-[calc(100vh-1rem)] pb-4 md:pb-6 lg:pb-8 animate-in fade-in duration-500 w-full">
+                <div className="flex-1 bg-black rounded-xl overflow-hidden border border-white/10 relative shadow-2xl min-h-[40vh] lg:min-h-0 lg:h-full flex items-center justify-center">
                     <div className="absolute inset-0 w-full h-full">
-                        <iframe 
-                           title="Player"
-                           allow="autoplay; fullscreen" 
-                           allowtransparency="true" 
-                           allowFullScreen 
-                           src="https://player.angelthump.com/?channel=elpintaunas" 
-                           seamless="seamless"
-                           style={{ border: 0, margin: 0, overflow: 'hidden', height: '100%', width: '100%' }}
-                        ></iframe>
+                        {/* AÑADIDO: storage-access y clipboard-write para que el reproductor no esté capado en el iFrame */}
+                        <iframe title="Player" allow="autoplay; fullscreen; storage-access; clipboard-write" allowtransparency="true" allowFullScreen src="https://player.angelthump.com/?channel=elpintaunas" seamless="seamless" style={{ border: 0, margin: 0, overflow: 'hidden', height: '100%', width: '100%' }}></iframe>
                     </div>
                 </div>
                 
-                <div className="w-full lg:w-[350px] xl:w-[400px] h-auto lg:h-full bg-[#36393f] rounded-xl overflow-hidden border border-white/10 flex flex-col shadow-2xl shrink-0 p-6 relative justify-center">
-                    <div className="absolute top-0 left-0 right-0 bg-[#202225] p-3 border-b border-black/20 flex justify-center items-center">
-                       <span className="font-bold text-white text-sm flex items-center gap-2"><Layers size={16} className="text-[#5865F2]" /> Acceso Premium</span>
+                <div className="w-full lg:w-[350px] xl:w-[400px] bg-[#36393f] rounded-xl overflow-hidden border border-white/10 flex flex-col shadow-2xl shrink-0 h-auto lg:h-full">
+                    <div className="bg-[#202225] p-3 border-b border-black/20 flex justify-center items-center shrink-0">
+                       <span className="font-bold text-white text-sm flex items-center gap-2">
+                           <Layers size={16} className="text-[#5865F2]" /> Acceso Premium
+                       </span>
                     </div>
                     
-                    <div className="flex flex-col items-center text-center mt-8">
-                        <div className="bg-[#5865F2]/10 p-4 rounded-full mb-4 border border-[#5865F2]/30">
-                            <svg className="w-10 h-10 text-[#5865F2]" fill="currentColor" viewBox="0 0 127.14 96.36">
+                    <div className="flex flex-col flex-1 p-4 md:p-5 justify-center items-center text-center">
+                        <div className="bg-[#5865F2]/10 p-3 rounded-full mb-3 border border-[#5865F2]/30 shrink-0">
+                            <svg className="w-8 h-8 text-[#5865F2]" fill="currentColor" viewBox="0 0 127.14 96.36">
                                 <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77.7,77.7,0,0,0,6.89,11.1,105.25,105.25,0,0,0,32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.56,65.3c-5.36,0-9.8-4.83-9.8-10.74s4.33-10.74,9.8-10.74,9.84,4.83,9.8,10.74C52.4,60.47,48,65.3,42.56,65.3Zm42,0c-5.36,0-9.8-4.83-9.8-10.74s4.33-10.74,9.8-10.74,9.84,4.83,9.8,10.74C94.4,60.47,90,65.3,84.56,65.3Z"/>
                             </svg>
                         </div>
-                        <h3 className="text-xl font-black text-white mb-2">Contraseña del Directo</h3>
-                        <p className="text-gray-400 text-xs mb-6 leading-relaxed">
+                        <h3 className="text-xl font-black text-white mb-1.5 shrink-0">Contraseña del Directo</h3>
+                        <p className="text-gray-400 text-[11px] md:text-xs mb-4 leading-relaxed shrink-0">
                             El directo está protegido. Verifica que tienes el rol requerido en nuestro servidor de Discord para obtener la contraseña actual.
                         </p>
                         
                         <a 
                            href="https://discord.com/oauth2/authorize?client_id=1475601631977406605&response_type=code&redirect_uri=https%3A%2F%2Felpepestreamstv.netlify.app%2F%3Ftab%3Ddirectos&scope=identify"
-                           className={`bg-[#5865F2] hover:bg-[#4752C4] text-white font-bold py-3 px-6 rounded-md transition-all w-full shadow-lg hover:scale-105 flex items-center justify-center gap-2 text-sm ${isVerifying ? 'opacity-50 pointer-events-none' : ''}`}
+                           className={`font-bold py-2.5 px-6 rounded-md transition-all w-full shadow-lg hover:scale-105 flex items-center justify-center gap-2 text-sm shrink-0 ${
+                               isVerifying ? 'opacity-50 pointer-events-none bg-[#5865F2] text-white' : 
+                               isLogged ? 'bg-neutral-800 hover:bg-neutral-700 text-gray-300 border border-white/10' : 
+                               'bg-[#5865F2] hover:bg-[#4752C4] text-white'
+                           }`}
                         >
-                            {isVerifying ? 'Verificando...' : 'Verificar mi Rol en Discord'}
+                            {isVerifying ? 'Verificando...' : (isLogged ? '🔄 Refrescar Contraseña' : 'Verificar mi Rol en Discord')}
                         </a>
       
-                        <div className="mt-6 w-full bg-black/40 border border-white/5 rounded-lg p-4 transition-all min-h-[70px]">
-                            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Contraseña Actual</span>
-                            <div className={`mt-1 text-lg font-mono font-bold select-text text-center ${
-                                !streamPassword ? 'text-red-500 text-sm' : 
-                                streamPassword.includes('•') ? 'text-gray-600 blur-[2px] select-none' : 
-                                streamPassword.includes('Verificando') ? 'text-yellow-500 animate-pulse' : 
-                                streamPassword.includes('❌') ? 'text-red-500 text-sm' : 
-                                'text-[#e5a00d] drop-shadow-[0_0_8px_rgba(229,160,13,0.5)]'
-                            }`}>
-                                {streamPassword || "❌ Vacío"}
+                        <div className="mt-4 w-full bg-black/40 border border-white/5 rounded-xl p-3.5 transition-all flex flex-col items-center shadow-inner shrink-0">
+                            <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2.5 flex items-center gap-1">
+                                <AlertTriangle size={12} className="text-[#e5a00d]" /> Clave del Reproductor
+                            </span>
+                            <div 
+                                className={`bg-black/60 px-3 py-2.5 rounded-lg border w-full flex items-center justify-center relative group transition-colors ${streamPassword && !streamPassword.includes('❌') && !streamPassword.includes('••••') && !streamPassword.includes('Verificando') ? 'cursor-pointer hover:border-[#e5a00d]/50 border-white/10' : 'border-white/5'}`}
+                                onClick={handleCopyPass}
+                            >
+                                <span className={`text-base md:text-lg font-mono font-bold text-center break-all transition-colors ${
+                                    !streamPassword ? 'text-red-500 text-sm' : 
+                                    streamPassword.includes('•') ? 'text-gray-600 blur-[2px] select-none' : 
+                                    streamPassword.includes('Verificando') ? 'text-yellow-500 animate-pulse' : 
+                                    streamPassword.includes('❌') ? 'text-red-500 text-sm' : 
+                                    'text-[#e5a00d] drop-shadow-[0_0_8px_rgba(229,160,13,0.5)] group-hover:text-yellow-400'
+                                }`}>
+                                    {copiedPass ? '¡Copiada!' : (streamPassword || "❌ Vacío")}
+                                </span>
                             </div>
+                            <p className="text-[9px] text-gray-500 mt-2.5 text-center leading-relaxed font-medium px-2">
+                                Introduce esta contraseña si el reproductor indica que la emisión es privada.
+                            </p>
                         </div>
 
                         {streamSid && (
-                            <div className="mt-3 w-full bg-black/40 border border-white/5 rounded-lg p-4 transition-all animate-in fade-in zoom-in duration-300">
-                                <span className="text-[10px] text-[#e5a00d] uppercase tracking-widest font-bold flex items-center gap-1"><Info size={12}/> Cookie (angelthump.sid)</span>
-                                <div className="mt-2 flex flex-col gap-2">
+                            <div className="mt-3 w-full bg-black/40 border border-white/5 rounded-xl p-3.5 transition-all animate-in fade-in zoom-in duration-300 shadow-inner shrink-0">
+                                <span className="text-[10px] text-[#e5a00d] uppercase tracking-widest font-bold flex items-center gap-1.5 justify-center mb-2.5">
+                                    <Star size={14}/> Activación Premium
+                                </span>
+                                <div className="flex flex-col gap-2.5">
                                     <button 
                                         onClick={handleCopyCookie} 
-                                        className={`w-full text-xs font-bold p-3 rounded transition-all flex items-center justify-center gap-2 ${copied ? 'bg-green-500 text-black' : 'bg-[#e5a00d] text-black hover:scale-105'}`}
+                                        className={`w-full text-xs font-bold py-2.5 px-4 rounded-lg transition-all flex items-center justify-center gap-2 ${copied ? 'bg-green-500 text-black' : 'bg-[#e5a00d] text-black hover:scale-105 shadow-lg shadow-[#e5a00d]/20'}`}
                                     >
-                                        <Layers size={14} />
+                                        <Layers size={16} />
                                         {copied ? '¡JSON Copiado!' : 'Copiar Cookie JSON'}
                                     </button>
+                                    
+                                    <div className="flex items-start gap-2 p-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-[9px] md:text-[10px] text-red-400/90 leading-snug text-left">
+                                        <AlertTriangle size={14} className="shrink-0 mt-0.5 text-red-400" />
+                                        <span>
+                                            <strong>Modo Incógnito/Firefox:</strong> Permite las "Cookies de terceros" en el candado del navegador.
+                                        </span>
+                                    </div>
                                 </div>
-                                <p className="text-[9px] text-gray-500 mt-2 leading-tight">Copia el JSON e impórtalo en tu extensión de cookies para entrar sin contraseña.</p>
                             </div>
                         )}
                     </div>
@@ -1114,15 +1152,7 @@ export default function App() {
                    </div>
                 ) : (
                    categories.map((cat, idx) => (
-                       <MovieRow 
-                           key={idx} 
-                           title={cat.title} 
-                           items={cat.items} 
-                           onSelect={setSelectedItem} 
-                           onCategoryClick={setSelectedCategory}
-                           icon={cat.icon} 
-                           eager={true} 
-                       />
+                       <MovieRow key={idx} title={cat.title} items={cat.items} onSelect={setSelectedItem} onCategoryClick={setSelectedCategory} icon={cat.icon} eager={idx === 0} />
                    ))
                 )}
               </div>
