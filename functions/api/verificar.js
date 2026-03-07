@@ -23,7 +23,7 @@ export async function onRequest(context) {
   const GUILD_ID = env.DISCORD_GUILD_ID;
   const ROLE_ID = env.DISCORD_ROLE_ID;
   const CHANNEL_ID = env.DISCORD_CHANNEL_ID;
-  const REDIRECT_URI = 'https://elpepestreamstv.marianopepe234.workers.dev/?tab=directos';
+  const REDIRECT_URI = 'https://pruebaelppstrmstv.pages.dev/?tab=directos';
 
   try {
     // --- FASE A: Intercambiar código por Token del Usuario ---
